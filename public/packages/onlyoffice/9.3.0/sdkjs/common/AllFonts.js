@@ -378,8 +378,8 @@ window["__custom_font_registry__"] = {
     "Slidefu",
     "Slidefu Regular",
     "演示佛系体",
-    "test"
-  ]
+    "test",
+  ],
 };
 /**
  * 根据 window.__custom_font_registry__ 同步写入 __fonts_files / __fonts_infos。
@@ -478,6 +478,7 @@ window["__custom_font_registry__"] = {
   ];
 
   var PATCHED_WORD = false;
+  var WORD_BINARIES_INJECTED = false;
   var PATCHED_CELL = false;
   var PATCHED_SLIDE = false;
   // --- Slide 状态机（勿随意重置；reload 只允许一次，否则易与 ZDc/JOf 形成死循环）---
@@ -591,17 +592,16 @@ window["__custom_font_registry__"] = {
 
   function loadCatalogFontSync(fileId) {
     try {
+      var url = getFontsBaseUrl() + fileId;
       var xhr = new XMLHttpRequest();
-      xhr.open("GET", getFontsBaseUrl() + fileId, false);
-      if ("responseType" in xhr) {
-        xhr.responseType = "arraybuffer";
+      // 同步 XHR 不能设 responseType（iframe 代理下会 InvalidAccessError），用 responseText 读二进制。
+      xhr.open("GET", url, false);
+      if (xhr.overrideMimeType) {
+        xhr.overrideMimeType("text/plain; charset=x-user-defined");
       }
       xhr.send(null);
       if (xhr.status !== 200 && xhr.status !== 0) {
         return null;
-      }
-      if (xhr.response) {
-        return decodeCatalogWire(new Uint8Array(xhr.response));
       }
       var text = xhr.responseText || "";
       var buf = new Uint8Array(text.length);
@@ -745,11 +745,20 @@ window["__custom_font_registry__"] = {
       var entry = registry[id];
       var list = listFontNames(entry);
       var primary = list[0];
-      if (!primary || l1b[primary] === undefined) {
+      var idx = primary !== undefined ? l1b[primary] : undefined;
+      if (idx === undefined) {
+        for (var p = 0; p < list.length; p++) {
+          if (list[p] !== undefined && l1b[list[p]] !== undefined) {
+            primary = list[p];
+            idx = l1b[primary];
+            break;
+          }
+        }
+      }
+      if (primary === undefined || idx === undefined) {
         continue;
       }
-      var idx = l1b[primary];
-      for (var i = 1; i < list.length; i++) {
+      for (var i = 0; i < list.length; i++) {
         var alias = list[i];
         if (alias && alias !== primary) {
           l1b[alias] = idx;
@@ -1098,6 +1107,15 @@ window["__custom_font_registry__"] = {
       set: function (value) {
         editor = value;
         hookFontListInit();
+        if (
+          value &&
+          !isSpreadsheetEditor(value) &&
+          !isPresentationEditor(value)
+        ) {
+          window.setTimeout(function () {
+            reloadWordDocumentFontsFromEditor();
+          }, 0);
+        }
         // 演示稿 editor 就绪后：挂 JOf hook，并等待 ea.N_ 可用后 reload 一次 TJb。
         if (PATCHED_SLIDE && value && value.yga) {
           syncSlideFontBaseUrl();
@@ -1127,7 +1145,7 @@ window["__custom_font_registry__"] = {
 
     var origSgd = qq.sgd.bind(qq);
     qq.sgd = function (name) {
-      var family = plainFontName(name);
+      var family = resolveDocumentFontName(plainFontName(name));
       if (Object.prototype.hasOwnProperty.call(l1b, family)) {
         var picked = { Yda: family };
         if (qq.n3d) {
@@ -1939,6 +1957,177 @@ window["__custom_font_registry__"] = {
   }
 
   // Word 文档字体队列：mJ.GPb + Lif 触发 SDK 异步加载（Word 排版刷新主要靠此，非 asc_calculate）。
+  function wordCatalogReady() {
+    var asc = window.AscFonts;
+    return !!(
+      asc &&
+      asc.QQ &&
+      asc.L1b &&
+      asc.dpc &&
+      asc.epc &&
+      asc.Tcc
+    );
+  }
+
+  function syncWordEngineFontRefs() {
+    var mJ = window.AscCommon && window.AscCommon.mJ;
+    if (!mJ) {
+      return false;
+    }
+    var base = getFontsBaseUrl();
+    mJ.zbg = base;
+    window.__ONLYOFFICE_FONTS_BASE__ = base;
+    return true;
+  }
+
+  function collectWordBinaryFileIds(registry) {
+    var ids = [];
+    var seen = {};
+    for (var id in registry) {
+      if (!Object.prototype.hasOwnProperty.call(registry, id)) {
+        continue;
+      }
+      if (!seen[id]) {
+        seen[id] = true;
+        ids.push(id);
+      }
+    }
+    return ids;
+  }
+
+  function areWordRegistryBinariesReady(ids) {
+    var asc = window.AscFonts;
+    if (!asc || !asc.dpc) {
+      return false;
+    }
+    for (var i = 0; i < ids.length; i++) {
+      var fileIndex = findDpcIndex(asc.dpc, ids[i]);
+      if (fileIndex < 0) {
+        return false;
+      }
+      var entry = asc.dpc[fileIndex];
+      if (!entry || !(entry.hKa && entry.hKa())) {
+        return false;
+      }
+    }
+    return ids.length > 0;
+  }
+
+  function prepareWordFontCatalog() {
+    if (!wordCatalogReady()) {
+      return false;
+    }
+
+    var registry = loadCustomFontRegistry();
+    registerAliasFamiliesWord(registry);
+    if (!PATCHED_WORD) {
+      fixFontPickerThumbnails(registry);
+      hookEditorForFontList();
+      hookFontListInit();
+      installWordCatalogFontResolution();
+      PATCHED_WORD = true;
+    }
+    return true;
+  }
+
+  function ensureWordFontBinaries() {
+    if (WORD_BINARIES_INJECTED) {
+      return true;
+    }
+    if (!prepareWordFontCatalog()) {
+      return false;
+    }
+
+    syncWordEngineFontRefs();
+    var registry = loadCustomFontRegistry();
+    var ids = collectWordBinaryFileIds(registry);
+    injectCustomFontBinariesWord(ids);
+    if (areWordRegistryBinariesReady(ids)) {
+      WORD_BINARIES_INJECTED = true;
+      return true;
+    }
+    return false;
+  }
+
+  function reloadWordDocumentFontsFromEditor() {
+    if (!ensureWordFontBinaries()) {
+      return false;
+    }
+    queueDocumentFontsWord(expandRegistry(loadCustomFontRegistry()).names);
+    scheduleLayoutRefresh();
+    return true;
+  }
+
+  function hookWordDocumentFontLoading() {
+    var mJ = window.AscCommon && window.AscCommon.mJ;
+    if (!mJ || mJ.__CUSTOM_FONTS_WORD_PATCHED__) {
+      return false;
+    }
+    if (!mJ.GPb && !mJ.Lif) {
+      return false;
+    }
+
+    function beforeDocumentFonts() {
+      ensureWordFontBinaries();
+    }
+
+    if (mJ.GPb) {
+      var origGPb = mJ.GPb;
+      mJ.GPb = function () {
+        beforeDocumentFonts();
+        return origGPb.apply(this, arguments);
+      };
+    }
+
+    if (mJ.Lif) {
+      var origLif = mJ.Lif;
+      mJ.Lif = function () {
+        beforeDocumentFonts();
+        return origLif.apply(this, arguments);
+      };
+    }
+
+    if (mJ.GE) {
+      var origGE = mJ.GE;
+      mJ.GE = function () {
+        beforeDocumentFonts();
+        return origGE.apply(this, arguments);
+      };
+    }
+
+    mJ.__CUSTOM_FONTS_WORD_PATCHED__ = true;
+    return true;
+  }
+
+  function hookWordEngineInit() {
+    var common = (window.AscCommon = window.AscCommon || {});
+    if (common.__CUSTOM_FONTS_MJ_WATCH__) {
+      return false;
+    }
+
+    common.__CUSTOM_FONTS_MJ_WATCH__ = true;
+    var engine = common.mJ;
+    Object.defineProperty(common, "mJ", {
+      configurable: true,
+      get: function () {
+        return engine;
+      },
+      set: function (value) {
+        engine = value;
+        if (value) {
+          syncWordEngineFontRefs();
+          hookWordDocumentFontLoading();
+        }
+      },
+    });
+
+    if (engine) {
+      syncWordEngineFontRefs();
+      hookWordDocumentFontLoading();
+    }
+    return true;
+  }
+
   function queueDocumentFontsWord(names) {
     var mJ = window.AscCommon && window.AscCommon.mJ;
     if (!mJ || !mJ.GPb || !names.length) {
@@ -2359,24 +2548,15 @@ window["__custom_font_registry__"] = {
   // ---------------------------------------------------------------------------
 
   function tryInstallWord() {
-    if (PATCHED_WORD || !window.AscFonts || !window.AscFonts.QQ || !window.AscFonts.L1b) {
-      return PATCHED_WORD;
+    hookWordEngineInit();
+    if (!wordCatalogReady()) {
+      return PATCHED_WORD && WORD_BINARIES_INJECTED;
     }
-
-    // Word 只需一次：别名 + FontPicker + 二进制 + 文档字体队列。
-    var registry = loadCustomFontRegistry();
-    var expanded = expandRegistry(registry);
-    registerAliasFamiliesWord(registry);
-    fixFontPickerThumbnails(registry);
-    hookEditorForFontList();
-    hookFontListInit();
-    installWordCatalogFontResolution();
-    injectCustomFontBinariesWord(expanded.ids);
-    queueDocumentFontsWord(expanded.names);
-    // Word：Lif 负责加载与排版；scheduleLayoutRefresh 仅为文档已打开时的补充。
-    PATCHED_WORD = true;
-    scheduleLayoutRefresh();
-    return true;
+    if (ensureWordFontBinaries()) {
+      queueDocumentFontsWord(expandRegistry(loadCustomFontRegistry()).names);
+      scheduleLayoutRefresh();
+    }
+    return PATCHED_WORD && WORD_BINARIES_INJECTED;
   }
 
   function tryInstallCell() {
@@ -2408,7 +2588,9 @@ window["__custom_font_registry__"] = {
 
   function isFontPatchingComplete() {
     var asc = window.AscFonts;
-    var wordDone = PATCHED_WORD || !(asc && asc.QQ && asc.L1b);
+    var wordNeeded = !!(asc && asc.QQ && asc.L1b);
+    var wordDone =
+      !wordNeeded || (PATCHED_WORD && WORD_BINARIES_INJECTED);
     var cellDone = PATCHED_CELL || !(asc && asc.yyc && asc.KPb);
     var slideDone =
       PATCHED_SLIDE || !(asc && asc.jec && asc.hyb && asc.jR);
@@ -2427,6 +2609,7 @@ window["__custom_font_registry__"] = {
     hookSlideFontManagerInit();
     hookCellFontCatalogInit();
     hookSlideFontCatalogInit();
+    hookWordEngineInit();
     hookCellEngineInit();
     hookCellDocumentFontLoading();
     hookCellEditorInit();
@@ -2439,11 +2622,11 @@ window["__custom_font_registry__"] = {
     if (tryInstallAll()) {
       return;
     }
-    var tries = 0;
     var timer = window.setInterval(function () {
       hookSlideFontManagerInit();
       hookCellFontCatalogInit();
       hookSlideFontCatalogInit();
+      hookWordEngineInit();
       hookCellEngineInit();
       hookCellDocumentFontLoading();
       hookCellEditorInit();
@@ -2456,7 +2639,7 @@ window["__custom_font_registry__"] = {
       tryInstallWord();
       tryInstallCell();
       tryInstallSlide();
-      if (isFontPatchingComplete() || ++tries > 400) {
+      if (isFontPatchingComplete()) {
         window.clearInterval(timer);
       }
     }, 50);
@@ -2507,6 +2690,52 @@ window["__custom_font_registry__"] = {
       primary: primary,
       patchedSlide: PATCHED_SLIDE,
       hit: hit,
+    };
+  };
+
+  window.__debugWordFonts = function () {
+    var asc = window.AscFonts;
+    var mJ = window.AscCommon && window.AscCommon.mJ;
+    var l1b = asc && asc.L1b;
+    var registry = loadCustomFontRegistry();
+    var ids = collectWordBinaryFileIds(registry);
+    var docNames = [
+      "楷体_GB2312",
+      "仿宋_GB2312",
+      "黑体",
+      "宋体",
+      "方正小标宋简体",
+      "方正仿宋_GBK",
+    ];
+    var aliases = {};
+    var binaries = {};
+    var i;
+    for (i = 0; i < docNames.length; i++) {
+      aliases[docNames[i]] = l1b ? l1b[docNames[i]] : undefined;
+    }
+    for (i = 0; i < ids.length; i++) {
+      var fileId = ids[i];
+      var idx = asc && asc.dpc ? findDpcIndex(asc.dpc, fileId) : -1;
+      var entry = idx >= 0 && asc.dpc ? asc.dpc[idx] : null;
+      binaries[fileId] = {
+        idx: idx,
+        EB: entry && entry.EB,
+        ok: !!(entry && entry.hKa && entry.hKa()),
+      };
+    }
+    console.log("__debugWordFonts", {
+      patchedWord: PATCHED_WORD,
+      binariesInjected: WORD_BINARIES_INJECTED,
+      fontsBase: getFontsBaseUrl(),
+      mJzbg: mJ && mJ.zbg,
+      aliases: aliases,
+      binaries: binaries,
+    });
+    return {
+      patchedWord: PATCHED_WORD,
+      binariesInjected: WORD_BINARIES_INJECTED,
+      aliases: aliases,
+      binaries: binaries,
     };
   };
 
