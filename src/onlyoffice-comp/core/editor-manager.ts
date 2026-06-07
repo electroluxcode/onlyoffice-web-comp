@@ -18,6 +18,7 @@ import {
   ONLYOFFICE_ID,
   ASC_RESTRICTION_NONE,
   ASC_RESTRICTION_VIEW,
+  OFFICE_EDITOR_LOGO,
 } from "../const";
 import {
   type CommentChangeHandlers,
@@ -302,9 +303,8 @@ export class EditorManager {
         },
       },
       logo: {
-        image: location.origin + "/logo-name_black.svg",
-        imageDark: location.origin + "/logo-name_white.svg",
-        url: location.origin,
+        image: OFFICE_EDITOR_LOGO.image,
+        imageDark: OFFICE_EDITOR_LOGO.imageDark,
       },
     };
   }

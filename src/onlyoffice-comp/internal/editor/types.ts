@@ -201,8 +201,8 @@ export interface X2tConvertParams {
 }
 
 export interface X2tConvertResult {
-  output: Uint8Array<ArrayBuffer> | null;
-  media: { [key: string]: Uint8Array<ArrayBuffer> };
+  output: Uint8Array | null;
+  media: { [key: string]: Uint8Array };
 }
 
 export type OfficeTheme =

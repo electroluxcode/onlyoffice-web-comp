@@ -35,6 +35,16 @@ export const READONLY_SWITCH_MIN_DELAY_MS = 200;
 export const ASC_RESTRICTION_NONE = 0;
 export const ASC_RESTRICTION_VIEW = 128;
 
+/** OnlyOffice 编辑器左上角 logo（jsDelivr 固定版本，避免依赖站点本地资源） */
+export const OFFICE_EDITOR_LOGO = {
+  /** 浅色主题：Office 品牌色图标 */
+  image:
+    "https://cdn.jsdelivr.net/npm/simple-icons@9.21.0/icons/microsoftoffice.svg",
+  /** 深色主题：同图标（品牌色在深色背景上同样清晰） */
+  imageDark:
+    "https://cdn.jsdelivr.net/npm/simple-icons@9.21.0/icons/microsoftoffice.svg",
+} as const;
+
 // ── 静态资源（SDK / x2t）────────────────────────────────────────
 
 type StaticResource = {
@@ -60,7 +70,7 @@ type StaticResource = {
 
 function createStaticResource(): StaticResource {
   const onlyofficeSdkRoot =
-    process.env.NEXT_PUBLIC_APP_ROOT || "/v9.3.0.24-1";
+    process.env.NEXT_PUBLIC_APP_ROOT || "/packages/onlyoffice/9.3.0";
   /** x2t 与 SDK 同版本目录；磁盘上为 Brotli 预压缩，由 x2t.worker 内 fetch-brotli 自动解压 */
   const x2tRoot = `${onlyofficeSdkRoot}/x2t-1`;
   const apiJs = "/web-apps/apps/api/documents/api.js";

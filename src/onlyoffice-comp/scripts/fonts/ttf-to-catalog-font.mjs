@@ -3,7 +3,7 @@
  * 将原始 TTF/OTF 转为 OnlyOffice public/fonts/{id} catalog 线格式。
  *
  * 源文件默认放在本脚本同目录（onlyoffice-comp/scripts/fonts/），例如 1000.ttf；
- * 产物写入 public/v9.3.0.24-1/fonts/{id}。
+ * 产物写入 public/9.3.0/fonts/{id}。
  *
  * 用法:
  *   pnpm font:catalog -- --id 1000 --verify
@@ -24,8 +24,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** 放置待转换的 .ttf / .otf（如 1000.ttf） */
 const DEFAULT_WORKSPACE_DIR = __dirname;
 const REPO_ROOT = path.resolve(__dirname, "../../..");
-const DEFAULT_OUTPUT_DIR = path.join(REPO_ROOT, "public/v9.3.0.24-1/fonts");
-const DEFAULT_ALLFONTS = path.join(REPO_ROOT, "public/v9.3.0.24-1/sdkjs/common/AllFonts.js");
+const DEFAULT_OUTPUT_DIR = path.join(REPO_ROOT, "public/9.3.0/fonts");
+const DEFAULT_ALLFONTS = path.join(REPO_ROOT, "public/9.3.0/sdkjs/common/AllFonts.js");
 
 const FONT_EXTENSIONS = [".ttf", ".otf", ".tte", ".otc", ".ttc"];
 
@@ -49,7 +49,7 @@ function printUsage() {
 选项:
   --id <id>           OnlyOffice 字体文件 id（输出文件名，无扩展名）
   --workspace <dir>   源字体目录（默认: onlyoffice-comp/scripts/fonts）
-  --out <path>        输出路径（编码默认: public/v9.3.0.24-1/fonts/<id>）
+  --out <path>        输出路径（编码默认: public/9.3.0/fonts/<id>）
   --fonts-dir <dir>   同 --out 的目录别名（编码产物目录）
   --allfonts <path>   AllFonts.js 路径
   --verify            编码后 XOR 还原并校验 TTF magic

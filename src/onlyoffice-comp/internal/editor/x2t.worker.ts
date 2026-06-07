@@ -452,8 +452,8 @@ function writeFonts(fonts?: { [key: string]: Uint8Array }) {
 /**
  * Read media files from the working directory
  */
-function readMedia(): { [key: string]: Uint8Array<ArrayBuffer> } {
-  const media: { [key: string]: Uint8Array<ArrayBuffer> } = {};
+function readMedia(): { [key: string]: Uint8Array } {
+  const media: { [key: string]: Uint8Array } = {};
   try {
     const files = x2t.FS.readdir("/working/media/");
     for (const file of files) {
@@ -586,7 +586,7 @@ async function convert({
   }
 
   // Read output file
-  let output: Uint8Array<ArrayBuffer> | null = null;
+  let output: Uint8Array | null = null;
   try {
     output = x2t.FS.readFile(toPath);
     if (output && fileTo === "Editor.bin" && fontAliases) {

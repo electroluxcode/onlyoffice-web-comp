@@ -179,7 +179,7 @@ export class OnlyOfficeManager {
     );
 
     return {
-      blob: new Blob([result.data], {
+      blob: new Blob([result.data as any], {
         type: getOfficeMimeType(this.fileType),
       }),
       fileName: result.fileName,

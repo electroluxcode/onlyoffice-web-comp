@@ -1,41 +1,22 @@
-// 统一导出 onlyoffice-comp 的所有公共 API
+/**
+ * onlyoffice-comp 公共 API
+ *
+ * | 层        | 目录      | 职责                              |
+ * |-----------|-----------|-----------------------------------|
+ * | const     | const/    | 常量、静态资源、文件类型映射      |
+ * | store     | store/    | 文档/语言等跨页面状态             |
+ * | util      | util/     | SDK 初始化、x2t 转换、下载工具    |
+ * | core      | core/     | EditorManager、事件总线、业务门面 |
+ * | feature   | feature/  | 批注、修订                        |
+ * | internal  | internal/ | mock server / socket（不对外）    |
+ */
 
-// 从 x2t.ts 导出
-export { convertBinToDocument, createEditorView } from './lib/x2t';
+export * from "./const";
+export * from "./store";
+export * from "./util";
+export * from "./core";
+export * from "./feature";
 
-// 从 utils.ts 导出
-export { initializeOnlyOffice } from './lib/utils';
-
-// 从 document-state.ts 导出
-export {
-  setDocmentObj,
-  getDocmentObj,
-  getOnlyOfficeLang,
-  getCurrentLang,
-  setCurrentLang,
-} from './lib/document-state';
-
-// 从 editor-manager.ts 导出
-export { editorManager, editorManagerFactory, EditorManager } from './lib/editor-manager';
-
-// 从 const.ts 导出
-export {
-  ONLYOFFICE_EVENT_KEYS,
-  FILE_TYPE,
-  ONLYOFFICE_ID,
-  ONLYOFFICE_LANG_KEY,
-  ONLYOFFICE_CONTAINER_CONFIG,
-} from './lib/const';
-
-// 从 eventbus.ts 导出
-export { onlyofficeEventbus } from './lib/eventbus';
-
-export {
-  onlyOfficeServiceClient,
-  OnlyOfficeServiceClient,
-  type CreateEditorOptions,
-  type EditorInstance,
-  type EventCallback,
-  type MessageType,
-  type ServiceMessage,
-} from './service-client';
+export type * from "./type/word-api";
+export type * from "./type/sdk-internal";
+export type { OfficeTheme, PluginMode } from "./internal/editor/types";
