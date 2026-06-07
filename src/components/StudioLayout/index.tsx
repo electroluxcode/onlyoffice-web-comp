@@ -66,22 +66,17 @@ const menuItems: MenuProps['items'] = [
         icon: <FolderOutlined />,
         label: 'Base',
       },
-      {
-        key: '/multi/tabs',
-        icon: <FolderOutlined />,
-        label: 'Tab Cache',
-      },
     ],
   },
   {
-    key: '/service',
+    key: '/editor',
     icon: <CodeOutlined />,
-    label: 'Service',
+    label: 'Editor',
     children: [
       {
-        key: '/service/onlyoffice',
+        key: '/editor',
         icon: <FolderOutlined />,
-        label: 'iframe Service',
+        label: 'Web Office',
       },
     ],
   },
@@ -107,8 +102,7 @@ export default function StudioLayout({ children }: StudioLayoutProps) {
       '/docs/base': { selected: '/docs/base', parent: '/docs' },
       '/ppt/base': { selected: '/ppt/base', parent: '/ppt' },
       '/multi/base': { selected: '/multi/base', parent: '/multi' },
-      '/multi/tabs': { selected: '/multi/tabs', parent: '/multi' },
-      '/demo/onlyoffice': { selected: '/demo/onlyoffice', parent: '/demo' },
+      '/editor': { selected: '/editor', parent: '/editor' },
     }
 
     // 精确匹配路径

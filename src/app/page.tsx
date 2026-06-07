@@ -1,15 +1,5 @@
-'use client'
-import React, { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-function page() {
-  const router = useRouter()
-  // 跳转到 excel 页面
-  useEffect(() => {
-    router.push('/excel/base' as any)
-  }, [router])
-  return (
-    <div>page</div>
-  )
-}
+import { redirect } from "next/navigation";
 
-export default page
+export default function Page() {
+  redirect("/excel/base");
+}
