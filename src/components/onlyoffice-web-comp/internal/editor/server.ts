@@ -68,6 +68,35 @@ export class EditorServer {
     this.handleMessage = this.handleMessage.bind(this);
   }
 
+  reset() {
+    if (this.pendingExport) {
+      window.clearTimeout(this.pendingExport.timer);
+      this.pendingExport.reject(new Error("Editor server reset"));
+      this.pendingExport = null;
+    }
+
+    if (this.socket) {
+      this.socket.server.off("message", this.handleMessage);
+      this.socket = null;
+    }
+
+    if (this.urlsMap.size > 0) {
+      this.urlsMap.forEach((url) => URL.revokeObjectURL(url));
+    }
+
+    this.id = "";
+    this.file = null;
+    this.fileType = "docx";
+    this.title = "";
+    this.fsMap.clear();
+    this.urlsMap.clear();
+    this.loadPromise = null;
+    this.downloadId = "";
+    this.downloadParts = [];
+    this.syncChangesIndex = 0;
+    this.participants = [];
+  }
+
   async open(
     file: File,
     { fileType, fileName }: { fileType?: string; fileName?: string } = {},
@@ -89,8 +118,9 @@ export class EditorServer {
 
   openNew(fileType?: string) {
     this.fileType = fileType || "docx";
-    // TODO: should generate new id?
-    this.id = this.id || randomId();
+    this.id = randomId();
+    this.file = null;
+    this.loadPromise = null;
     this.title = "New Document";
     const documentType = getDocumentType(this.fileType);
 

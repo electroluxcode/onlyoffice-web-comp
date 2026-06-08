@@ -53,6 +53,8 @@ export type CreateEditorViewOptions = {
   editing?: boolean;
   theme?: OfficeTheme;
   plugins?: PluginMode;
+  /** 由 EditorManagerFactory.beginLoadSession 生成，用于丢弃过期的异步初始化 */
+  loadSession?: number;
 };
 
 let instanceIndex = 0;
@@ -156,6 +158,14 @@ export class EditorManager {
   }
 
   private getEditorFrameElement() {
+    const containerFrame = document
+      .getElementById(this.containerId)
+      ?.querySelector<HTMLIFrameElement>('iframe[name="frameEditor"]');
+
+    if (containerFrame) {
+      return containerFrame;
+    }
+
     const frames = Array.from(
       document.querySelectorAll<HTMLIFrameElement>('iframe[name="frameEditor"]'),
     );
@@ -800,11 +810,27 @@ export class EditorManager {
     this.notifyUserSave();
   }
 
+  private isLoadSessionActive(
+    containerId: string,
+    loadSession?: number,
+  ) {
+    return (
+      loadSession === undefined ||
+      editorManagerFactory.isLoadSessionActive(containerId, loadSession)
+    );
+  }
+
   async create(options: CreateEditorViewOptions) {
+    const containerId = options.containerId || this.containerId || ONLYOFFICE_ID;
+
+    if (!this.isLoadSessionActive(containerId, options.loadSession)) {
+      return this;
+    }
+
     this.destroy();
     this.plugins = options.plugins || "featured";
     this.readOnly = !!options.readOnly;
-    this.containerId = options.containerId || this.containerId || ONLYOFFICE_ID;
+    this.containerId = containerId;
 
     const fileType = getFileType(options.fileName, options.fileType);
     this.fileName = options.fileName;
@@ -831,7 +857,15 @@ export class EditorManager {
       throw new Error("OnlyOffice requires a file, url, or new document type");
     }
 
+    if (!this.isLoadSessionActive(containerId, options.loadSession)) {
+      return this;
+    }
+
     await initializeOnlyOffice();
+
+    if (!this.isLoadSessionActive(containerId, options.loadSession)) {
+      return this;
+    }
 
     this.editorLang = (options.lang as OnlyOfficeLang | undefined) || getOnlyOfficeLang();
     this.uiTheme = options.theme || "theme-white";
@@ -1230,12 +1264,24 @@ export class EditorManager {
     this.dirty = false;
     this.comments.clear();
     this.revisions = [];
+    this.server.reset();
   }
 }
 
 class EditorManagerFactory {
   private defaultManager = new EditorManager();
   private managers = new Map<string, EditorManager>();
+  private loadSessions = new Map<string, number>();
+
+  beginLoadSession(containerId: string) {
+    const next = (this.loadSessions.get(containerId) ?? 0) + 1;
+    this.loadSessions.set(containerId, next);
+    return next;
+  }
+
+  isLoadSessionActive(containerId: string, loadSession: number) {
+    return this.loadSessions.get(containerId) === loadSession;
+  }
 
   getDefault() {
     return this.defaultManager;

@@ -34,6 +34,8 @@ export type OnlyOfficeManagerOptions = {
   defaultFileName: string;
   readOnly?: boolean;
   lang?: OnlyOfficeLang;
+  /** 页面初始化会话，用于忽略路由切换后过期的 openDocument */
+  loadSession?: number;
 };
 
 export type OpenDocumentInput = {
@@ -41,6 +43,7 @@ export type OpenDocumentInput = {
   file?: File;
   isNew?: boolean;
   readOnly?: boolean;
+  loadSession?: number;
 };
 
 export class OnlyOfficeManager {
@@ -86,6 +89,7 @@ export class OnlyOfficeManager {
       fileName: options.defaultFileName,
       isNew: true,
       readOnly: options.readOnly,
+      loadSession: options.loadSession,
     });
 
     return manager;
@@ -106,6 +110,7 @@ export class OnlyOfficeManager {
       fileName: file.name,
       file,
       readOnly: options.readOnly,
+      loadSession: options.loadSession,
     });
 
     return manager;
@@ -131,6 +136,7 @@ export class OnlyOfficeManager {
       lang: getOnlyOfficeLang(),
       containerId: this.containerId,
       editorManager: this.editor,
+      loadSession: input.loadSession,
     });
 
     this.readOnly = readOnly;

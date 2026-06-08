@@ -6,6 +6,7 @@ import {
   ONLYOFFICE_ID,
   ONLYOFFICE_LANG_KEY,
   OnlyOfficeManager,
+  editorManagerFactory,
   type FileType,
 } from "@/components/onlyoffice-web-comp";
 
@@ -72,38 +73,48 @@ export function OfficePreviewPage({
 
   useEffect(() => {
     let unsubscribeLoading: (() => void) | undefined;
-    let cancelled = false;
+    let disposed = false;
+    let ownedManager: OnlyOfficeManager | null = null;
+    const containerId = ONLYOFFICE_ID;
 
     const init = async () => {
+      editorManagerFactory.destroy(containerId);
+      const loadSession = editorManagerFactory.beginLoadSession(containerId);
+
       let manager: OnlyOfficeManager;
 
       if (initialFileUrl) {
         const file = await fetchPublicFile(initialFileUrl, defaultFileName);
-        if (cancelled) return;
+        if (disposed) return;
 
         manager = await OnlyOfficeManager.createWithFile(
           {
-            containerId: ONLYOFFICE_ID,
+            containerId,
             fileType,
             defaultFileName,
             readOnly,
+            loadSession,
           },
           file,
         );
       } else {
         manager = await OnlyOfficeManager.create({
-          containerId: ONLYOFFICE_ID,
+          containerId,
           fileType,
           defaultFileName,
           readOnly,
+          loadSession,
         });
       }
 
-      if (cancelled) {
-        manager.destroy();
+      if (
+        disposed ||
+        !editorManagerFactory.isLoadSessionActive(containerId, loadSession)
+      ) {
         return;
       }
 
+      ownedManager = manager;
       managerRef.current = manager;
       setCurrentLangState(manager.getLanguage());
       setEditorReady(true);
@@ -113,16 +124,18 @@ export function OfficePreviewPage({
     };
 
     init().catch((err) => {
-      if (cancelled) return;
+      if (disposed) return;
       setError("无法加载编辑器组件");
       console.error("Failed to initialize OnlyOffice:", err);
     });
 
     return () => {
-      cancelled = true;
+      disposed = true;
       unsubscribeLoading?.();
-      managerRef.current?.destroy();
+      ownedManager?.destroy();
+      editorManagerFactory.destroy(containerId);
       managerRef.current = null;
+      setEditorReady(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
