@@ -57,9 +57,9 @@ Types are exported from `type/word-api.ts` and `type/sdk-internal.ts`.
 
 ## Prerequisites
 
-1. **Static assets**: Host the OnlyOffice SDK (including `web-apps/`, `sdkjs/`, `fonts/`, `x2t-1/`) under a public path, default `public/9.3.0/`.
+1. **Static assets**: Host the OnlyOffice SDK (including `web-apps/`, `sdkjs/`, `fonts/`, `x2t/`) under a public path, default `public/9.3.0/`.
 2. **Env var** (optional): `NEXT_PUBLIC_APP_ROOT=/9.3.0` — must match `STATIC_RESOURCE.onlyoffice.root`.
-3. **x2t Brotli**: `x2t-1/x2t.js` and `x2t.wasm` are Brotli-precompressed on disk. **No** `Content-Encoding: br` headers are required; the x2t worker decompresses them via built-in `fetch-brotli`.
+3. **x2t Brotli**: `x2t/x2t.js` and `x2t.wasm` are Brotli-precompressed on disk. **No** `Content-Encoding: br` headers are required; the x2t worker decompresses them via built-in `fetch-brotli`.
 4. **DOM container**: Reserve a mount point in your page (see examples below).
 
 ---

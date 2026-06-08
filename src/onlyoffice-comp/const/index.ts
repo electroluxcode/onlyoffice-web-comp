@@ -72,7 +72,7 @@ function createStaticResource(): StaticResource {
   const onlyofficeSdkRoot =
     process.env.NEXT_PUBLIC_APP_ROOT || "/packages/onlyoffice/9.3.0";
   /** x2t 与 SDK 同版本目录；磁盘上为 Brotli 预压缩，由 x2t.worker 内 fetch-brotli 自动解压 */
-  const x2tRoot = `${onlyofficeSdkRoot}/x2t-1`;
+  const x2tRoot = `${onlyofficeSdkRoot}/x2t`;
   const apiJs = "/web-apps/apps/api/documents/api.js";
   const preloadHtml = "/web-apps/apps/api/documents/preload.html";
 

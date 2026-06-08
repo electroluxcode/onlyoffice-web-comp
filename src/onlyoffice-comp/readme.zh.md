@@ -57,9 +57,9 @@ import {
 
 ## 前置条件
 
-1. **静态资源**：将 OnlyOffice SDK（含 `web-apps/`、`sdkjs/`、`fonts/`、`x2t-1/`）放到站点可访问目录，默认 `public/9.3.0/`。
+1. **静态资源**：将 OnlyOffice SDK（含 `web-apps/`、`sdkjs/`、`fonts/`、`x2t/`）放到站点可访问目录，默认 `public/9.3.0/`。
 2. **环境变量**（可选）：`NEXT_PUBLIC_APP_ROOT=/9.3.0`，与 `STATIC_RESOURCE.onlyoffice.root` 一致。
-3. **x2t Brotli**：`x2t-1/` 下 `x2t.js`、`x2t.wasm` 为 Brotli 预压缩文件；**无需**配置 `Content-Encoding: br`，Worker 内 `fetch-brotli` + 内置解码器会自动解压。
+3. **x2t Brotli**：`x2t/` 下 `x2t.js`、`x2t.wasm` 为 Brotli 预压缩文件；**无需**配置 `Content-Encoding: br`，Worker 内 `fetch-brotli` + 内置解码器会自动解压。
 4. **DOM 容器**：页面需预留编辑器挂载点（见下方示例）。
 
 ---
