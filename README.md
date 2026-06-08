@@ -148,7 +148,6 @@ window["__custom_font_registry__"] = {
 - **Keys** (e.g. `"1001"`) must match the `--id` and the filename under `fonts/`
 - **Values** are alias arrays covering every font name used in your documents
 
-On SDK load, the registry is **automatically synced** into `__fonts_files` / `__fonts_infos`, with `__custom_font_catalog_snapshot__` for Word / Excel / Slide font pipelines (see the runtime patch at the end of `AllFonts.js`).
 
 ### 3. Built-in fonts (optional)
 

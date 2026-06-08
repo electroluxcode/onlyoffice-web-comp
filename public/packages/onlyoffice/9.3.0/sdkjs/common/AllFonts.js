@@ -980,10 +980,11 @@ window["__custom_font_registry__"] = {
     } catch (err) {
       suffix = "";
     }
+    // web-apps ComboBoxFonts 加载的是 fonts_thumbnail[_ea].png.bin，不是 .bin。
     return (
       "../../../../sdkjs/common/Images/fonts_thumbnail" +
       suffix +
-      ".bin"
+      ".png.bin"
     );
   }
 
@@ -1047,47 +1048,458 @@ window["__custom_font_registry__"] = {
     return true;
   }
 
+  function getFontThumbnailValue(font) {
+    if (!font) {
+      return undefined;
+    }
+    if (typeof font.asc_getFontThumbnail === "function") {
+      return font.asc_getFontThumbnail();
+    }
+    if (font.zPg !== undefined) {
+      return font.zPg;
+    }
+    if (font.feh !== undefined) {
+      return font.feh;
+    }
+    if (font.qAg !== undefined) {
+      return font.qAg;
+    }
+    return undefined;
+  }
+
+  function setFontThumbnailValue(font, idx) {
+    if (!font) {
+      return;
+    }
+    if (font.zPg !== undefined) {
+      font.zPg = idx;
+    }
+    if (font.feh !== undefined) {
+      font.feh = idx;
+    }
+    if (font.qAg !== undefined) {
+      font.qAg = idx;
+    }
+  }
+
+  function getMaxKnownThumbnailIndex(catalog) {
+    var max = 0;
+    if (!catalog) {
+      return max;
+    }
+    for (var i = 0; i < catalog.length; i++) {
+      var q = catalog[i].QSh;
+      if (typeof q === "number" && isFinite(q) && q >= 0 && q > max) {
+        max = q;
+      }
+    }
+    return max;
+  }
+
+  function fontThumbnailNeedsFallback(name, thumb, nameSet, maxKnown, spriteCount) {
+    if (nameSet[name]) {
+      return true;
+    }
+    if (typeof thumb !== "number" || !isFinite(thumb) || thumb < 0) {
+      return true;
+    }
+    thumb = Math.floor(thumb);
+    if (spriteCount > 0 && thumb >= spriteCount) {
+      return true;
+    }
+    if (maxKnown >= 0 && thumb > maxKnown) {
+      return true;
+    }
+    // 自定义字体二进制元数据常误写成单格字节数（300*28*4=33600），读不到 sprite 时也要拦。
+    if (spriteCount <= 0 && thumb > 512) {
+      return true;
+    }
+    return false;
+  }
+
+  function getThumbnailSanitizeContext(registry) {
+    registry = registry || loadCustomFontRegistry();
+    var spriteCount = getFontSpriteCountSync();
+    var nameSet = buildRegistryNameSet(registry);
+    var catalog = window.AscFonts && window.AscFonts.$4a;
+
+    if (catalog) {
+      fixFontPickerThumbnails(registry);
+      var maxKnown = getMaxKnownThumbnailIndex(catalog);
+      if (spriteCount > 0) {
+        maxKnown = Math.min(maxKnown, spriteCount - 1);
+      } else if (maxKnown > 512) {
+        maxKnown = 512;
+      }
+      return {
+        registry: registry,
+        fallback: findFallbackThumbnailIndex(catalog),
+        nameSet: nameSet,
+        spriteCount: spriteCount,
+        maxKnown: maxKnown,
+      };
+    }
+
+    if (spriteCount > 0) {
+      return {
+        registry: registry,
+        fallback: 0,
+        nameSet: nameSet,
+        spriteCount: spriteCount,
+        maxKnown: spriteCount - 1,
+      };
+    }
+
+    return {
+      registry: registry,
+      fallback: 0,
+      nameSet: nameSet,
+      spriteCount: -1,
+      maxKnown: 512,
+    };
+  }
+
+  function resolveSafeThumbnailIndex(name, rawThumb, ctx) {
+    ctx = ctx || getThumbnailSanitizeContext();
+    if (fontThumbnailNeedsFallback(name, rawThumb, ctx.nameSet, ctx.maxKnown, ctx.spriteCount)) {
+      return ctx.fallback;
+    }
+    if (typeof rawThumb !== "number" || !isFinite(rawThumb)) {
+      return ctx.fallback;
+    }
+    return Math.floor(rawThumb);
+  }
+
+  function sanitizeFontComboStore(store) {
+    if (!store || typeof store.each !== "function") {
+      return;
+    }
+    var ctx = getThumbnailSanitizeContext();
+    store.each(function (model) {
+      if (!model || typeof model.get !== "function") {
+        return;
+      }
+      var name = model.get("name");
+      var imgidx = model.get("imgidx");
+      var safe = resolveSafeThumbnailIndex(name, imgidx, ctx);
+      if (safe !== imgidx) {
+        model.set("imgidx", safe);
+      }
+    });
+  }
+
   function sanitizeFontListThumbnails(fonts, registry) {
     if (!fonts || !fonts.length) {
       return;
     }
 
-    fixFontPickerThumbnails(registry);
-    var catalog = window.AscFonts && window.AscFonts.$4a;
-    if (!catalog) {
-      return;
-    }
-
-    var fallback = findFallbackThumbnailIndex(catalog);
-    var nameSet = buildRegistryNameSet(registry);
-    var spriteCount = getFontSpriteCountSync();
+    var ctx = getThumbnailSanitizeContext(registry);
     for (var j = 0; j < fonts.length; j++) {
       var font = fonts[j];
       if (!font) {
         continue;
       }
-      if (
-        nameSet[font.name] ||
-        font.zPg < 0 ||
-        (spriteCount > 0 && font.zPg >= spriteCount)
-      ) {
-        font.zPg = fallback;
+      var name =
+        font.name ||
+        (typeof font.asc_getFontName === "function" ? font.asc_getFontName() : "");
+      var thumb = getFontThumbnailValue(font);
+      var safe = resolveSafeThumbnailIndex(name, thumb, ctx);
+      if (safe !== thumb) {
+        setFontThumbnailValue(font, safe);
       }
     }
   }
 
-  function hookFontListInit() {
+  function sanitizeFontCollectionModels(collection) {
+    if (!collection) {
+      return;
+    }
+    var ctx = getThumbnailSanitizeContext();
+    if (typeof collection.each === "function") {
+      collection.each(function (model) {
+        if (!model || typeof model.get !== "function") {
+          return;
+        }
+        var name = model.get("name");
+        var imgidx = model.get("imgidx");
+        var safe = resolveSafeThumbnailIndex(name, imgidx, ctx);
+        if (safe !== imgidx) {
+          model.set("imgidx", safe);
+        }
+      });
+      return;
+    }
+    if (Array.isArray(collection)) {
+      for (var i = 0; i < collection.length; i++) {
+        var row = collection[i];
+        if (!row) {
+          continue;
+        }
+        var rowName = row.name;
+        var rowIdx = row.imgidx;
+        var rowSafe = resolveSafeThumbnailIndex(rowName, rowIdx, ctx);
+        if (rowSafe !== rowIdx) {
+          row.imgidx = rowSafe;
+        }
+      }
+    }
+  }
+
+  function hookFontObjectThumbnailProto(Ctor, prop) {
+    if (!Ctor || !Ctor.prototype || Ctor.prototype.__CUSTOM_FONT_THUMB_PROTO__) {
+      return false;
+    }
+    var proto = Ctor.prototype;
+    var origGet = proto.asc_getFontThumbnail;
+    proto.asc_getFontThumbnail = function () {
+      var name = "";
+      if (typeof this.asc_getFontName === "function") {
+        name = this.asc_getFontName();
+      } else if (this.name) {
+        name = this.name;
+      }
+      var raw = origGet ? origGet.call(this) : this[prop];
+      return resolveSafeThumbnailIndex(name, raw);
+    };
+    proto.__CUSTOM_FONT_THUMB_PROTO__ = true;
+    return true;
+  }
+
+  function hookFontObjectThumbnails() {
+    var asc = window.AscFonts;
+    if (!asc) {
+      return false;
+    }
+    var patched = false;
+    patched = hookFontObjectThumbnailProto(asc.tJa, "feh") || patched;
+    patched = hookFontObjectThumbnailProto(asc.nbb, "qAg") || patched;
+    patched = hookFontObjectThumbnailProto(asc.aKa, "zPg") || patched;
+    return patched;
+  }
+
+  function patchEditorFontListMethod(editor, methodName) {
+    if (!editor) {
+      return false;
+    }
+    var orig = editor[methodName];
+    if (typeof orig !== "function") {
+      var proto = Object.getPrototypeOf(editor);
+      while (proto && typeof orig !== "function") {
+        orig = proto[methodName];
+        proto = Object.getPrototypeOf(proto);
+      }
+    }
+    if (typeof orig !== "function") {
+      return false;
+    }
+    var flag = "__CUSTOM_FONTS_" + methodName + "_PATCHED__";
+    if (editor[flag]) {
+      return false;
+    }
+    editor[methodName] = function (fonts) {
+      sanitizeFontListThumbnails(fonts, loadCustomFontRegistry());
+      return orig.apply(this, arguments);
+    };
+    editor[flag] = true;
+    return true;
+  }
+
+  function patchEditorEventMethod(editor, methodName) {
+    if (!editor) {
+      return false;
+    }
+    var orig = editor[methodName];
+    if (typeof orig !== "function") {
+      var proto = Object.getPrototypeOf(editor);
+      while (proto && typeof orig !== "function") {
+        orig = proto[methodName];
+        proto = Object.getPrototypeOf(proto);
+      }
+    }
+    if (typeof orig !== "function") {
+      return false;
+    }
+    var flag = "__CUSTOM_FONTS_" + methodName + "_PATCHED__";
+    if (editor[flag]) {
+      return false;
+    }
+    editor[methodName] = function (eventName) {
+      if (eventName === "asc_onInitEditorFonts" && arguments[1]) {
+        sanitizeFontListThumbnails(arguments[1], loadCustomFontRegistry());
+      }
+      return orig.apply(this, arguments);
+    };
+    editor[flag] = true;
+    return true;
+  }
+
+  function hookEditorFontEventEmit() {
     var editor = window.Asc && window.Asc.editor;
-    if (!editor || editor.__CUSTOM_FONTS_ZWJ_PATCHED__ || !editor.Zwj) {
+    if (!editor) {
+      return false;
+    }
+    var patched = false;
+    patched = patchEditorEventMethod(editor, "fe") || patched;
+    patched = patchEditorEventMethod(editor, "qc") || patched;
+    return patched;
+  }
+
+  // web-apps 在 asc_onInitEditorFonts 里把 imgidx 写入 Backbone store；点选字体复制到「最近使用」会 clone 该值。
+  function hookWebAppsFontsLoad() {
+    var common = window.Common;
+    if (
+      !common ||
+      !common.NotificationCenter ||
+      common.NotificationCenter.__CUSTOM_FONTS_LOAD_PATCHED__
+    ) {
+      return false;
+    }
+    var nc = common.NotificationCenter;
+    var orig = nc.trigger;
+    nc.trigger = function (eventName) {
+      if (eventName === "fonts:load" && arguments.length > 1) {
+        sanitizeFontCollectionModels(arguments[1]);
+      }
+      return orig.apply(this, arguments);
+    };
+    nc.__CUSTOM_FONTS_LOAD_PATCHED__ = true;
+    return true;
+  }
+
+  // 最后一道防线：在 web-apps ComboBoxFonts 渲染/筛选/复制到最近使用前修正 store.imgidx。
+  function hookComboBoxFontsWebApps() {
+    var common = window.Common;
+    if (!common || !common.UI || !common.UI.ComboBoxFonts) {
+      return false;
+    }
+    var proto = common.UI.ComboBoxFonts.prototype;
+    if (proto.__CUSTOM_FONTS_COMBO_PATCHED__) {
       return false;
     }
 
-    var origZwj = editor.Zwj;
-    editor.Zwj = function (fonts) {
+    if (typeof proto.updateVisibleFontsTiles === "function") {
+      var origTiles = proto.updateVisibleFontsTiles;
+      proto.updateVisibleFontsTiles = function (t, e) {
+        sanitizeFontComboStore(this.store);
+        return origTiles.call(this, t, e);
+      };
+    }
+
+    if (typeof proto.fillFonts === "function") {
+      var origFill = proto.fillFonts;
+      proto.fillFonts = function (t, e) {
+        sanitizeFontCollectionModels(t);
+        return origFill.call(this, t, e);
+      };
+    }
+
+    if (typeof proto.addItemToRecent === "function") {
+      var origRecent = proto.addItemToRecent;
+      proto.addItemToRecent = function (t, e) {
+        if (t && typeof t.get === "function") {
+          var name = t.get("name");
+          var imgidx = t.get("imgidx");
+          var safe = resolveSafeThumbnailIndex(name, imgidx);
+          if (safe !== imgidx) {
+            t.set("imgidx", safe);
+          }
+        }
+        var result = origRecent.call(this, t, e);
+        sanitizeFontComboStore(this.store);
+        return result;
+      };
+    }
+
+    proto.__CUSTOM_FONTS_COMBO_PATCHED__ = true;
+    return true;
+  }
+
+  function buildToolbarFontArrayFromCatalog() {
+    var catalog = window.AscFonts && window.AscFonts.$4a;
+    var asc = window.AscFonts;
+    if (!catalog || !asc) {
+      return null;
+    }
+    var Ctor = asc.tJa || asc.nbb || asc.aKa;
+    if (!Ctor) {
+      return null;
+    }
+    var fonts = [];
+    for (var i = 0; i < catalog.length; i++) {
+      var entry = catalog[i];
+      if (!entry || !entry.za || entry.za === "ASCW3") {
+        continue;
+      }
+      fonts.push(new Ctor(entry.za, "", entry.QSh));
+    }
+    return fonts.length ? fonts : null;
+  }
+
+  // catalog/缩略图补丁生效后，强制刷新 toolbar 字体列表（修复 ock/Igj 早于 hook 的 imgidx）。
+  function reloadEditorFontListForToolbar() {
+    hookFontObjectThumbnails();
+    hookFontListInit();
+    hookEditorFontEventEmit();
+    hookWebAppsFontsLoad();
+    hookComboBoxFontsWebApps();
+    var fonts = buildToolbarFontArrayFromCatalog();
+    if (!fonts) {
+      return false;
+    }
+    sanitizeFontListThumbnails(fonts, loadCustomFontRegistry());
+    var editor = window.Asc && window.Asc.editor;
+    if (!editor) {
+      return false;
+    }
+    if (typeof editor.Igj === "function") {
+      editor.Igj(fonts);
+      return true;
+    }
+    if (typeof editor.ock === "function") {
+      editor.ock(fonts);
+      return true;
+    }
+    if (typeof editor.Zwj === "function") {
+      editor.Zwj(fonts);
+      return true;
+    }
+    return false;
+  }
+
+  function scheduleToolbarFontListReload() {
+    window.setTimeout(function () {
+      reloadEditorFontListForToolbar();
+    }, 0);
+  }
+
+  // Word: Zwj；Excel: ock；PPT: Igj — 三端把字体列表交给 web-apps 的入口不同。
+  function hookFontListInit() {
+    var editor = window.Asc && window.Asc.editor;
+    if (!editor) {
+      return false;
+    }
+    hookFontObjectThumbnails();
+    hookEditorFontEventEmit();
+    hookWebAppsFontsLoad();
+    hookComboBoxFontsWebApps();
+    var patched = false;
+    patched = patchEditorFontListMethod(editor, "Zwj") || patched;
+    patched = patchEditorFontListMethod(editor, "ock") || patched;
+    patched = patchEditorFontListMethod(editor, "Igj") || patched;
+    return patched;
+  }
+
+  function hookSlideFontDelivery() {
+    var lU = window.AscCommon && window.AscCommon.lU;
+    if (!lU || lU.__CUSTOM_FONTS_QDB_PATCHED__ || !lU.qdb) {
+      return false;
+    }
+    var origQdb = lU.qdb.bind(lU);
+    lU.qdb = function (fonts) {
       sanitizeFontListThumbnails(fonts, loadCustomFontRegistry());
-      return origZwj.call(this, fonts);
+      return origQdb.apply(this, arguments);
     };
-    editor.__CUSTOM_FONTS_ZWJ_PATCHED__ = true;
+    lU.__CUSTOM_FONTS_QDB_PATCHED__ = true;
     return true;
   }
 
@@ -1107,6 +1519,7 @@ window["__custom_font_registry__"] = {
       set: function (value) {
         editor = value;
         hookFontListInit();
+        scheduleToolbarFontListReload();
         if (
           value &&
           !isSpreadsheetEditor(value) &&
@@ -1219,9 +1632,11 @@ window["__custom_font_registry__"] = {
 
     syncSlideFontBaseUrl();
     hookSlideDocumentFontLoading();
+    hookSlideFontDelivery();
     hookSlideFontPickerGl();
     ensureSlideFontCatalogOnce();
     PATCHED_SLIDE = true;
+    scheduleToolbarFontListReload();
     scheduleSlideFontReloadOnceWhenReady();
     return true;
   }
@@ -1247,6 +1662,7 @@ window["__custom_font_registry__"] = {
       },
     });
     hookSlideDocumentFontLoading();
+    hookSlideFontDelivery();
     return true;
   }
 
@@ -1260,8 +1676,10 @@ window["__custom_font_registry__"] = {
     var origGl = jR.Gl.bind(jR);
     jR.Gl = function () {
       origGl();
+      var registry = loadCustomFontRegistry();
+      fixFontPickerThumbnails(registry);
       if (SLIDE_CATALOG_READY) {
-        registerAliasFamiliesSlide(loadCustomFontRegistry());
+        registerAliasFamiliesSlide(registry);
         clearSlideFontPickerCache(jR);
       }
     };
@@ -1647,6 +2065,9 @@ window["__custom_font_registry__"] = {
     SLIDE_CATALOG_PREPARING = true;
     try {
       var registry = loadCustomFontRegistry();
+      fixFontPickerThumbnails(registry);
+      hookFontListInit();
+      hookSlideFontDelivery();
       var expanded = expandRegistry(registry);
       registerAliasFamiliesSlide(registry);
       installSlideHybLookupProxy();
@@ -1654,6 +2075,7 @@ window["__custom_font_registry__"] = {
       syncSlideFontBaseUrl();
       clearSlideFontPickerCache(window.AscFonts.jR);
       injectCustomFontBinariesSlide(expanded.ids);
+      scheduleToolbarFontListReload();
       return true;
     } finally {
       SLIDE_CATALOG_PREPARING = false;
@@ -2025,6 +2447,7 @@ window["__custom_font_registry__"] = {
       hookEditorForFontList();
       hookFontListInit();
       installWordCatalogFontResolution();
+      scheduleToolbarFontListReload();
       PATCHED_WORD = true;
     }
     return true;
@@ -2322,6 +2745,8 @@ window["__custom_font_registry__"] = {
     syncCellEngineFontRefs();
 
     var registry = loadCustomFontRegistry();
+    fixFontPickerThumbnails(registry);
+    hookFontListInit();
     var expanded = expandRegistry(registry);
     registerAliasFamiliesCell(registry);
     registerDocumentFontAliasesCell(registry);
@@ -2330,6 +2755,7 @@ window["__custom_font_registry__"] = {
     installCellCatalogFontResolution();
     clearCellFontPickerCache(window.AscFonts.dW);
     injectCustomFontBinariesCell(expanded.ids);
+    scheduleToolbarFontListReload();
     return expanded;
   }
 
@@ -2619,6 +3045,8 @@ window["__custom_font_registry__"] = {
     hookSlideDocumentFontLoading();
     hookEditorForFontList();
     hookFontListInit();
+    hookWebAppsFontsLoad();
+    hookComboBoxFontsWebApps();
     if (tryInstallAll()) {
       return;
     }
@@ -2636,6 +3064,8 @@ window["__custom_font_registry__"] = {
       hookSlideDocumentFontLoading();
       hookEditorForFontList();
       hookFontListInit();
+      hookWebAppsFontsLoad();
+      hookComboBoxFontsWebApps();
       tryInstallWord();
       tryInstallCell();
       tryInstallSlide();
@@ -2644,6 +3074,10 @@ window["__custom_font_registry__"] = {
       }
     }, 50);
   }
+
+  window.__reloadEditorFontListForToolbar = function () {
+    return reloadEditorFontListForToolbar();
+  };
 
   window.__forceCustomFontBinaries = function () {
     var ok = runCellFontPipeline(true);
