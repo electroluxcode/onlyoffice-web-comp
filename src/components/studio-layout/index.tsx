@@ -73,18 +73,6 @@ const menuItems: MenuProps['items'] = [
       },
     ],
   },
-  {
-    key: '/editor',
-    icon: <CodeOutlined />,
-    label: 'Editor',
-    children: [
-      {
-        key: '/editor',
-        icon: <FolderOutlined />,
-        label: 'Web Office',
-      },
-    ],
-  },
 ]
 
 interface StudioLayoutProps {
