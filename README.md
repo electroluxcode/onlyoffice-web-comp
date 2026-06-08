@@ -108,7 +108,53 @@ Deploy to Vercel or any static host. Live demo: https://onlyoffice-web-comp.verc
 
 ## Fonts
 
-This project **does not ship** copyrighted commercial font files. Font names are kept for document compatibility; add font files yourself. See [06 Notes](src/components/onlyoffice-web-comp/docs/06-注意事项与支持格式.md) or place files under `public/fonts/` using indices from `public/sdkjs/common/AllFonts.js`.
+Custom fonts are registered via **`__custom_font_registry__`**, with **`ttf-to-catalog-font.mjs`** producing OnlyOffice catalog wire-format files.
+
+### 1. Convert TTF/OTF to catalog wire format
+
+Script:
+
+`public/packages/onlyoffice/9.3.0/fonts/ttf-to-catalog-font.mjs`
+
+Place the source font next to the script (e.g. `1001.ttf`), or pass an explicit input path:
+
+```bash
+# Read 1001.ttf from the same directory → public/packages/onlyoffice/9.3.0/fonts/1001
+node public/packages/onlyoffice/9.3.0/fonts/ttf-to-catalog-font.mjs --id 1001 --verify
+
+# Explicit source file
+node public/packages/onlyoffice/9.3.0/fonts/ttf-to-catalog-font.mjs ./MyFont.ttf --id 1001 --verify
+```
+
+Output is an extensionless catalog file: `public/packages/onlyoffice/9.3.0/fonts/{id}`.
+
+A copy also lives at `src/components/onlyoffice-web-comp/scripts/fonts/ttf-to-catalog-font.mjs`.
+
+### 2. Register aliases in `__custom_font_registry__`
+
+Edit `public/packages/onlyoffice/9.3.0/sdkjs/common/AllFonts.js`:
+
+```javascript
+window["__custom_font_registry__"] = {
+  "1001": [
+    "仿宋_GB2312",
+    "Slidefu",
+    "Slidefu Regular",
+    "演示佛系体",
+  ],
+};
+```
+
+- **Keys** (e.g. `"1001"`) must match the `--id` and the filename under `fonts/`
+- **Values** are alias arrays covering every font name used in your documents
+
+On SDK load, the registry is **automatically synced** into `__fonts_files` / `__fonts_infos`, with `__custom_font_catalog_snapshot__` for Word / Excel / Slide font pipelines (see the runtime patch at the end of `AllFonts.js`).
+
+### 3. Built-in fonts (optional)
+
+Built-in glyphs still use **numeric indices** in `__fonts_files`. To replace one, place a catalog wire file at `public/packages/onlyoffice/9.3.0/fonts/{index}` (no extension) using the index from that array.
+
+Ensure all font files comply with applicable licenses.
 
 ## Related Resources
 
