@@ -9,7 +9,7 @@ import {
   onlyOfficeManagerFactory,
   onlyofficeEventbus,
   type FileType,
-} from "@/onlyoffice-comp";
+} from "@/components/onlyoffice-web-comp";
 
 type PanelKey = "word" | "excel" | "ppt";
 

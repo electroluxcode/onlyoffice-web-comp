@@ -2,13 +2,12 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import {
-  FILE_TYPE,
   ONLYOFFICE_CONTAINER_CONFIG,
   ONLYOFFICE_ID,
   ONLYOFFICE_LANG_KEY,
   OnlyOfficeManager,
   type FileType,
-} from "@/onlyoffice-comp";
+} from "@/components/onlyoffice-web-comp";
 
 type OfficePreviewPageProps = {
   title: string;
@@ -18,6 +17,8 @@ type OfficePreviewPageProps = {
   fileType: FileType;
   accept: string;
   newButtonLabel: string;
+  /** public 目录下的默认文件路径，如 /test.xlsx */
+  initialFileUrl?: string;
 };
 
 function LoadingOverlay() {
@@ -40,6 +41,15 @@ const OnlyOfficeHost = memo(function OnlyOfficeHost() {
   );
 });
 
+async function fetchPublicFile(url: string, fileName: string) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${url}`);
+  }
+  const blob = await response.blob();
+  return new File([blob], fileName, { type: blob.type });
+}
+
 export function OfficePreviewPage({
   title,
   badge,
@@ -48,6 +58,7 @@ export function OfficePreviewPage({
   fileType,
   accept,
   newButtonLabel,
+  initialFileUrl,
 }: OfficePreviewPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const managerRef = useRef<OnlyOfficeManager | null>(null);
@@ -61,27 +72,54 @@ export function OfficePreviewPage({
 
   useEffect(() => {
     let unsubscribeLoading: (() => void) | undefined;
+    let cancelled = false;
 
-    OnlyOfficeManager.create({
-      containerId: ONLYOFFICE_ID,
-      fileType,
-      defaultFileName,
-      readOnly,
-    })
-      .then((manager) => {
-        managerRef.current = manager;
-        setCurrentLangState(manager.getLanguage());
-        setEditorReady(true);
-        unsubscribeLoading = manager.onLoadingChange(({ loading: next }) => {
-          setLoading(next);
+    const init = async () => {
+      let manager: OnlyOfficeManager;
+
+      if (initialFileUrl) {
+        const file = await fetchPublicFile(initialFileUrl, defaultFileName);
+        if (cancelled) return;
+
+        manager = await OnlyOfficeManager.createWithFile(
+          {
+            containerId: ONLYOFFICE_ID,
+            fileType,
+            defaultFileName,
+            readOnly,
+          },
+          file,
+        );
+      } else {
+        manager = await OnlyOfficeManager.create({
+          containerId: ONLYOFFICE_ID,
+          fileType,
+          defaultFileName,
+          readOnly,
         });
-      })
-      .catch((err) => {
-        setError("无法加载编辑器组件");
-        console.error("Failed to initialize OnlyOffice:", err);
+      }
+
+      if (cancelled) {
+        manager.destroy();
+        return;
+      }
+
+      managerRef.current = manager;
+      setCurrentLangState(manager.getLanguage());
+      setEditorReady(true);
+      unsubscribeLoading = manager.onLoadingChange(({ loading: next }) => {
+        setLoading(next);
       });
+    };
+
+    init().catch((err) => {
+      if (cancelled) return;
+      setError("无法加载编辑器组件");
+      console.error("Failed to initialize OnlyOffice:", err);
+    });
 
     return () => {
+      cancelled = true;
       unsubscribeLoading?.();
       managerRef.current?.destroy();
       managerRef.current = null;

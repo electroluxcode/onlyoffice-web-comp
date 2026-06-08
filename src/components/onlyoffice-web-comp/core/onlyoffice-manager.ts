@@ -91,6 +91,26 @@ export class OnlyOfficeManager {
     return manager;
   }
 
+  /** 加载 DocsAPI 并直接打开已有 File（先取文件再挂载） */
+  static async createWithFile(
+    options: OnlyOfficeManagerOptions,
+    file: File,
+  ): Promise<OnlyOfficeManager> {
+    const containerId = options.containerId ?? ONLYOFFICE_ID;
+    await initializeOnlyOffice();
+
+    const editor = editorManagerFactory.get(containerId);
+    const manager = new OnlyOfficeManager(editor, { ...options, containerId });
+
+    await manager.openDocument({
+      fileName: file.name,
+      file,
+      readOnly: options.readOnly,
+    });
+
+    return manager;
+  }
+
   /** 打开/切换文档（上传、新建、重开） */
   async openDocument(input: OpenDocumentInput) {
     const readOnly = input.readOnly ?? this.readOnly;

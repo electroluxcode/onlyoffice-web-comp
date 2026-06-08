@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { OfficePreviewPage } from "@/components/office/office-preview-page";
-import { FILE_TYPE } from "@/onlyoffice-comp";
+import { OfficePreviewPage } from "@/components/onlyoffice-web-demo/office-preview-page";
+import { FILE_TYPE } from "@/components/onlyoffice-web-comp";
 
 export const metadata: Metadata = {
   title: "PowerPoint Preview — OnlyOffice MVP",

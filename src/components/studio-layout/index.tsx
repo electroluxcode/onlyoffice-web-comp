@@ -13,7 +13,6 @@ import {
   GithubOutlined,
   MenuOutlined,
   CloseOutlined,
-  CodeOutlined,
 } from '@ant-design/icons'
 import './styles.css'
 
@@ -66,17 +65,10 @@ const menuItems: MenuProps['items'] = [
         icon: <FolderOutlined />,
         label: 'Base',
       },
-    ],
-  },
-  {
-    key: '/editor',
-    icon: <CodeOutlined />,
-    label: 'Editor',
-    children: [
       {
-        key: '/editor',
+        key: '/multi/tabs',
         icon: <FolderOutlined />,
-        label: 'Web Office',
+        label: 'Tabs',
       },
     ],
   },
@@ -102,6 +94,7 @@ export default function StudioLayout({ children }: StudioLayoutProps) {
       '/docs/base': { selected: '/docs/base', parent: '/docs' },
       '/ppt/base': { selected: '/ppt/base', parent: '/ppt' },
       '/multi/base': { selected: '/multi/base', parent: '/multi' },
+      '/multi/tabs': { selected: '/multi/tabs', parent: '/multi' },
       '/editor': { selected: '/editor', parent: '/editor' },
     }
 
@@ -187,7 +180,7 @@ export default function StudioLayout({ children }: StudioLayoutProps) {
             <p>Powered by OnlyOffice</p>
             <p className="version">v1.0.0</p>
             <a
-              href="https://github.com/electroluxcode/mvp-onlyoffice"
+              href="https://github.com/electroluxcode/onlyoffice-web-comp"
               target="_blank"
               rel="noopener noreferrer"
               className="github-link"
