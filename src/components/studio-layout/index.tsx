@@ -9,6 +9,7 @@ import {
   FileWordOutlined,
   FilePptOutlined,
   AppstoreOutlined,
+  CodeOutlined,
   FolderOutlined,
   GithubOutlined,
   MenuOutlined,
@@ -65,7 +66,11 @@ const menuItems: MenuProps['items'] = [
         icon: <FolderOutlined />,
         label: 'Base',
       },
-<<<<<<< HEAD:src/components/StudioLayout/index.tsx
+      {
+        key: '/multi/tabs',
+        icon: <FolderOutlined />,
+        label: 'Tabs',
+      },
     ],
   },
   {
@@ -77,12 +82,6 @@ const menuItems: MenuProps['items'] = [
         key: '/editor',
         icon: <FolderOutlined />,
         label: 'Web Office',
-=======
-      {
-        key: '/multi/tabs',
-        icon: <FolderOutlined />,
-        label: 'Tabs',
->>>>>>> refactor/v9:src/components/studio-layout/index.tsx
       },
     ],
   },
@@ -108,10 +107,7 @@ export default function StudioLayout({ children }: StudioLayoutProps) {
       '/docs/base': { selected: '/docs/base', parent: '/docs' },
       '/ppt/base': { selected: '/ppt/base', parent: '/ppt' },
       '/multi/base': { selected: '/multi/base', parent: '/multi' },
-<<<<<<< HEAD:src/components/StudioLayout/index.tsx
-=======
       '/multi/tabs': { selected: '/multi/tabs', parent: '/multi' },
->>>>>>> refactor/v9:src/components/studio-layout/index.tsx
       '/editor': { selected: '/editor', parent: '/editor' },
     }
 
