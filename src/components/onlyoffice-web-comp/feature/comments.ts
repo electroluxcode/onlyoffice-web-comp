@@ -27,6 +27,22 @@ export function normalizeCommentInput(input: CommentInput): CommentData {
   return input;
 }
 
+/** OnlyOffice pluginMethod_* / CZ.$be 识别的批注字段。 */
+export function toPluginCommentPayload(data: CommentData): CommentData {
+  const now = String(Date.now());
+
+  return {
+    Text: data.Text ?? "",
+    UserName: data.UserName ?? "Guest",
+    Time: data.Time != null ? String(data.Time) : now,
+    QuoteText: data.QuoteText ?? "",
+    Solved: data.Solved ?? false,
+    UserData: data.UserData ?? "",
+    Replies: Array.isArray(data.Replies) ? data.Replies : [],
+    ...data,
+  };
+}
+
 export function isResolvedComment(data: unknown) {
   if (!data || typeof data !== "object") {
     return false;

@@ -1,4 +1,5 @@
 import { converter } from "../internal/editor/x2t";
+import { getX2tExportFormats } from "../internal/editor/utils";
 import {
   type CreateEditorViewOptions,
   editorManagerFactory,
@@ -23,10 +24,13 @@ export async function convertBinToDocument(
 ) {
   const targetExt = fileType.toLowerCase();
   const data = new Uint8Array(binData).buffer;
+  const { formatFrom, formatTo } = getX2tExportFormats(targetExt);
   const result = await converter.convert({
     data,
     fileFrom: "Editor.bin",
     fileTo: `doc.${targetExt}`,
+    formatFrom,
+    formatTo,
     media,
   });
 

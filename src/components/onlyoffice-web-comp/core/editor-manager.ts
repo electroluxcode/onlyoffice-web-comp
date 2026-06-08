@@ -27,12 +27,14 @@ import {
   type CommentItem,
   isResolvedComment,
   normalizeCommentInput,
+  toPluginCommentPayload,
 } from "../feature/comments";
 import { onlyofficeEventbus } from "./eventbus";
 import {
   type RevisionChangeHandlers,
   type RevisionItem,
   normalizeRevisionItems,
+  flattenRevisionsReportByAuthors,
 } from "../feature/revisions";
 import { getOnlyOfficeLang, type OnlyOfficeLang } from "../store/lang";
 import { initializeOnlyOffice } from "../util/initialize";
@@ -51,6 +53,8 @@ export type CreateEditorViewOptions = {
   editing?: boolean;
   theme?: OfficeTheme;
   plugins?: PluginMode;
+  /** 由 EditorManagerFactory.beginLoadSession 生成，用于丢弃过期的异步初始化 */
+  loadSession?: number;
 };
 
 let instanceIndex = 0;
@@ -82,10 +86,17 @@ type OnlyOfficeSdkApi = {
   asc_SetGlobalTrackRevisions?: (enabled: boolean) => void;
   asc_GetGlobalTrackRevisions?: () => boolean;
   asc_GetRevisionsChangesStack?: () => unknown[];
+  asc_HaveRevisionsChanges?: () => boolean;
+  asc_GetTrackRevisionsReportByAuthors?: () => Record<string, unknown[]>;
+  asc_BeginViewModeInReview?: (finalMode?: boolean) => void;
+  asc_EndViewModeInReview?: () => void;
   asc_AcceptChanges?: (change?: unknown) => void;
   asc_RejectChanges?: (change?: unknown) => void;
   asc_AcceptChangesBySelection?: (all?: boolean) => void;
   asc_RejectChangesBySelection?: (all?: boolean) => void;
+  pluginMethod_GetAllComments?: () => Array<{ Id: string; Data: CommentData }>;
+  pluginMethod_AddComment?: (data: CommentData) => string | null;
+  pluginMethod_ChangeComment?: (id: string, data: CommentData) => void;
 };
 
 /** iframe 内运行时；混淆字段见 type/sdk-internal.ts，asc_* 为公开 API */
@@ -118,6 +129,9 @@ export class EditorManager {
   private fileType = "docx";
   private media: Record<string, Uint8Array> = {};
   private comments = new Map<string, CommentData>();
+  private revisions: RevisionItem[] = [];
+  private wordContentSyncPromise: Promise<void> | null = null;
+  private wordContentSyncTeardown: (() => void) | null = null;
 
   constructor(containerId = ONLYOFFICE_ID) {
     this.containerId = containerId;
@@ -144,6 +158,14 @@ export class EditorManager {
   }
 
   private getEditorFrameElement() {
+    const containerFrame = document
+      .getElementById(this.containerId)
+      ?.querySelector<HTMLIFrameElement>('iframe[name="frameEditor"]');
+
+    if (containerFrame) {
+      return containerFrame;
+    }
+
     const frames = Array.from(
       document.querySelectorAll<HTMLIFrameElement>('iframe[name="frameEditor"]'),
     );
@@ -315,6 +337,204 @@ export class EditorManager {
     api?.asc_SetGlobalTrackRevisions?.(false);
   }
 
+  private mergeCommentItems(items: CommentItem[]) {
+    for (const item of items) {
+      if (isResolvedComment(item.Data)) {
+        this.comments.delete(item.Id);
+        continue;
+      }
+
+      this.comments.set(item.Id, item.Data);
+    }
+  }
+
+  private fetchCommentsFromSdk(): CommentItem[] {
+    const raw = this.getSdkApi()?.pluginMethod_GetAllComments?.();
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+
+    return raw
+      .map((item, index) => {
+        const source =
+          item && typeof item === "object"
+            ? (item as Record<string, unknown>)
+            : {};
+        const id = String(source.Id ?? source.id ?? `comment-${index}`);
+        const data = (source.Data ?? source.data ?? source) as CommentData;
+
+        return { Id: id, Data: data };
+      })
+      .filter((item) => !isResolvedComment(item.Data));
+  }
+
+  private refreshCommentsFromSdk() {
+    this.mergeCommentItems(this.fetchCommentsFromSdk());
+  }
+
+  private refreshRevisionsFromSdk() {
+    const api = this.getSdkApi();
+    const stackItems = normalizeRevisionItems(
+      api?.asc_GetRevisionsChangesStack?.(),
+    );
+    const reportItems = flattenRevisionsReportByAuthors(
+      api?.asc_GetTrackRevisionsReportByAuthors?.(),
+    );
+
+    if (
+      stackItems.length > 0 &&
+      (reportItems.length === 0 || stackItems.length >= reportItems.length)
+    ) {
+      this.revisions = stackItems;
+      return;
+    }
+
+    if (reportItems.length > 0) {
+      this.revisions = reportItems;
+      return;
+    }
+
+    if (stackItems.length > 0) {
+      this.revisions = stackItems;
+    }
+  }
+
+  private syncRevisionsAfterMutation() {
+    this.refreshRevisionsFromSdk();
+
+    if (!this.haveRevisionsChanges()) {
+      this.revisions = [];
+    }
+  }
+
+  private applyAllRevisionChanges(mode: "accept" | "reject") {
+    const api = this.requireSdkApi();
+    const applyOne =
+      mode === "accept"
+        ? (raw: unknown) => api.asc_AcceptChanges?.(raw)
+        : (raw: unknown) => api.asc_RejectChanges?.(raw);
+    const applyBulk =
+      mode === "accept"
+        ? () => api.asc_AcceptChanges?.()
+        : () => api.asc_RejectChanges?.();
+
+    let guard = 0;
+    let stagnant = 0;
+    let lastCount = this.getAllRevisions().length;
+
+    while (this.haveRevisionsChanges() && guard++ < 20) {
+      this.refreshRevisionsFromSdk();
+      const [first] = this.revisions;
+
+      if (!first) {
+        applyBulk();
+        this.syncRevisionsAfterMutation();
+        continue;
+      }
+
+      applyOne(first.Raw);
+      this.syncRevisionsAfterMutation();
+
+      const nextCount = this.getAllRevisions().length;
+      if (nextCount >= lastCount && this.haveRevisionsChanges()) {
+        stagnant += 1;
+        if (stagnant >= 3) {
+          applyBulk();
+          this.syncRevisionsAfterMutation();
+          stagnant = 0;
+        }
+      } else {
+        stagnant = 0;
+      }
+
+      lastCount = nextCount;
+    }
+
+    this.syncRevisionsAfterMutation();
+  }
+
+  private teardownWordContentSync() {
+    this.wordContentSyncTeardown?.();
+    this.wordContentSyncTeardown = null;
+    this.wordContentSyncPromise = null;
+  }
+
+  private scheduleWordContentSync() {
+    window.setTimeout(() => {
+      this.refreshCommentsFromSdk();
+      this.refreshRevisionsFromSdk();
+    }, 0);
+  }
+
+  private ensureWordContentSync() {
+    if (this.fileType !== "docx" && getDocumentType(this.fileType) !== "word") {
+      return Promise.resolve();
+    }
+
+    if (this.wordContentSyncPromise) {
+      return this.wordContentSyncPromise;
+    }
+
+    this.wordContentSyncPromise = (async () => {
+      const api = this.requireSdkApi();
+
+      this.refreshCommentsFromSdk();
+      this.refreshRevisionsFromSdk();
+
+      const unsubscribers = await Promise.all([
+        this.subscribe({
+          type: "asc_onAddComment",
+          fn: (id, data) => {
+            const commentId = String(id);
+            const commentData = data as CommentData;
+            if (isResolvedComment(commentData)) {
+              this.comments.delete(commentId);
+              return;
+            }
+
+            this.comments.set(commentId, commentData);
+          },
+        }),
+        this.subscribe({
+          type: "asc_onChangeCommentData",
+          fn: (id, data) => {
+            const commentId = String(id);
+            const commentData = data as CommentData;
+            if (isResolvedComment(commentData)) {
+              this.comments.delete(commentId);
+              return;
+            }
+
+            this.comments.set(commentId, commentData);
+          },
+        }),
+        this.subscribe({
+          type: "asc_onRemoveComment",
+          fn: (id) => {
+            this.comments.delete(String(id));
+          },
+        }),
+        this.subscribe({
+          type: "asc_onShowRevisionsChange",
+          fn: () => {
+            this.refreshRevisionsFromSdk();
+          },
+        }),
+      ]);
+
+      this.wordContentSyncTeardown = () => {
+        unsubscribers.forEach((unsubscribe) => unsubscribe?.());
+      };
+
+      this.scheduleWordContentSync();
+      api.asc_Recalculate?.();
+    })().catch(() => {
+      this.teardownWordContentSync();
+    });
+
+    return this.wordContentSyncPromise;
+  }
+
   private getRestrictionSdkApi() {
     return this.getSdkApi() as {
       asc_setRestriction?: (type: number) => void;
@@ -390,6 +610,8 @@ export class EditorManager {
     this.editor?.destroyEditor?.();
     this.editor = null;
     this.comments.clear();
+    this.revisions = [];
+    this.teardownWordContentSync();
   }
 
   /** 语言写在 iframe URL 的 lang 参数里，运行时 refreshFile 不会更新界面语言。 */
@@ -430,6 +652,7 @@ export class EditorManager {
         onDocumentReady: () => {
           this.installCommentResolveCleanup();
           this.applyDefaultReviewSettings();
+          void this.ensureWordContentSync();
           onlyofficeEventbus.emit(ONLYOFFICE_EVENT_KEYS.DOCUMENT_READY, {
             fileName: doc.title,
             fileType: doc.fileType,
@@ -587,17 +810,35 @@ export class EditorManager {
     this.notifyUserSave();
   }
 
+  private isLoadSessionActive(
+    containerId: string,
+    loadSession?: number,
+  ) {
+    return (
+      loadSession === undefined ||
+      editorManagerFactory.isLoadSessionActive(containerId, loadSession)
+    );
+  }
+
   async create(options: CreateEditorViewOptions) {
+    const containerId = options.containerId || this.containerId || ONLYOFFICE_ID;
+
+    if (!this.isLoadSessionActive(containerId, options.loadSession)) {
+      return this;
+    }
+
     this.destroy();
     this.plugins = options.plugins || "featured";
     this.readOnly = !!options.readOnly;
-    this.containerId = options.containerId || this.containerId || ONLYOFFICE_ID;
+    this.containerId = containerId;
 
     const fileType = getFileType(options.fileName, options.fileType);
     this.fileName = options.fileName;
     this.fileType = fileType;
     this.media = {};
     this.comments.clear();
+    this.revisions = [];
+    this.teardownWordContentSync();
 
     if (options.isNew) {
       this.server.openNew(fileType);
@@ -616,7 +857,15 @@ export class EditorManager {
       throw new Error("OnlyOffice requires a file, url, or new document type");
     }
 
+    if (!this.isLoadSessionActive(containerId, options.loadSession)) {
+      return this;
+    }
+
     await initializeOnlyOffice();
+
+    if (!this.isLoadSessionActive(containerId, options.loadSession)) {
+      return this;
+    }
 
     this.editorLang = (options.lang as OnlyOfficeLang | undefined) || getOnlyOfficeLang();
     this.uiTheme = options.theme || "theme-white";
@@ -739,20 +988,68 @@ export class EditorManager {
   }
 
   getAllComments(): CommentItem[] {
+    this.refreshCommentsFromSdk();
+
     return Array.from(this.comments.entries()).map(([Id, Data]) => ({
       Id,
       Data,
     }));
   }
 
+  private createSdkCommentPayload(data: CommentData): unknown {
+    const asc = this.getEditorFrameWindow()?.Asc as
+      | (Record<string, unknown> & {
+          asc_CCommentDataWord?: new (value: unknown) => {
+            asc_putText?: (value: string) => void;
+            asc_putUserName?: (value: string) => void;
+            asc_putTime?: (value: string) => void;
+            asc_putQuoteText?: (value: string) => void;
+            asc_putSolved?: (value: boolean) => void;
+            asc_putUserData?: (value: string) => void;
+          };
+        })
+      | undefined;
+    const CommentDataWord = asc?.asc_CCommentDataWord;
+
+    if (!CommentDataWord) {
+      return data;
+    }
+
+    const comment = new CommentDataWord(null);
+    const payload = toPluginCommentPayload(data);
+
+    if (payload.Text != null) {
+      comment.asc_putText?.(String(payload.Text));
+    }
+    if (payload.UserName != null) {
+      comment.asc_putUserName?.(String(payload.UserName));
+    }
+    if (payload.Time != null) {
+      comment.asc_putTime?.(String(payload.Time));
+    }
+    if (payload.QuoteText != null) {
+      comment.asc_putQuoteText?.(String(payload.QuoteText));
+    }
+    if (typeof payload.Solved === "boolean") {
+      comment.asc_putSolved?.(payload.Solved);
+    }
+    if (payload.UserData != null) {
+      comment.asc_putUserData?.(String(payload.UserData));
+    }
+
+    return comment;
+  }
+
   addComment(input: CommentInput) {
     const api = this.requireSdkApi();
-    const data = normalizeCommentInput(input);
-    const id = api.asc_addComment?.(data);
+    const data = toPluginCommentPayload(normalizeCommentInput(input));
+    const id =
+      api.pluginMethod_AddComment?.(data) ??
+      api.asc_addComment?.(this.createSdkCommentPayload(data) as CommentData);
     if (id) {
-      this.comments.set(id, data);
+      this.comments.set(String(id), data);
     }
-    return id || "";
+    return id ? String(id) : "";
   }
 
   updateComment(id: string, data: CommentData) {
@@ -761,8 +1058,18 @@ export class EditorManager {
       return;
     }
 
-    this.requireSdkApi().asc_changeComment?.(id, data);
-    this.comments.set(id, data);
+    const api = this.requireSdkApi();
+    const payload = toPluginCommentPayload(data);
+
+    if (typeof api.pluginMethod_ChangeComment === "function") {
+      api.pluginMethod_ChangeComment(id, payload);
+    } else {
+      api.asc_changeComment?.(
+        id,
+        this.createSdkCommentPayload(payload) as CommentData,
+      );
+    }
+    this.comments.set(id, payload);
   }
 
   removeComment(id: string) {
@@ -836,13 +1143,26 @@ export class EditorManager {
   }
 
   haveRevisionsChanges() {
+    const api = this.getSdkApi();
+    if (typeof api?.asc_HaveRevisionsChanges === "function") {
+      return !!api.asc_HaveRevisionsChanges();
+    }
+
     return this.getAllRevisions().length > 0;
   }
 
   getAllRevisions(): RevisionItem[] {
-    return normalizeRevisionItems(
-      this.getSdkApi()?.asc_GetRevisionsChangesStack?.(),
-    );
+    this.refreshRevisionsFromSdk();
+
+    const api = this.getSdkApi();
+    if (
+      typeof api?.asc_HaveRevisionsChanges === "function" &&
+      !api.asc_HaveRevisionsChanges()
+    ) {
+      this.revisions = [];
+    }
+
+    return this.revisions;
   }
 
   goToNextRevision() {
@@ -880,6 +1200,7 @@ export class EditorManager {
         : revision;
     if (item) {
       this.requireSdkApi().asc_AcceptChanges?.(item.Raw);
+      this.syncRevisionsAfterMutation();
     }
   }
 
@@ -890,15 +1211,16 @@ export class EditorManager {
         : revision;
     if (item) {
       this.requireSdkApi().asc_RejectChanges?.(item.Raw);
+      this.syncRevisionsAfterMutation();
     }
   }
 
   acceptAllRevisions() {
-    this.requireSdkApi().asc_AcceptChanges?.();
+    this.applyAllRevisionChanges("accept");
   }
 
   rejectAllRevisions() {
-    this.requireSdkApi().asc_RejectChanges?.();
+    this.applyAllRevisionChanges("reject");
   }
 
   acceptRevisionsBySelection(all?: boolean) {
@@ -936,16 +1258,30 @@ export class EditorManager {
       this.userSaveTimer = null;
     }
     this.pendingUserSaveSnapshot = null;
+    this.teardownWordContentSync();
     this.editor?.destroyEditor?.();
     this.editor = null;
     this.dirty = false;
     this.comments.clear();
+    this.revisions = [];
+    this.server.reset();
   }
 }
 
 class EditorManagerFactory {
   private defaultManager = new EditorManager();
   private managers = new Map<string, EditorManager>();
+  private loadSessions = new Map<string, number>();
+
+  beginLoadSession(containerId: string) {
+    const next = (this.loadSessions.get(containerId) ?? 0) + 1;
+    this.loadSessions.set(containerId, next);
+    return next;
+  }
+
+  isLoadSessionActive(containerId: string, loadSession: number) {
+    return this.loadSessions.get(containerId) === loadSession;
+  }
 
   getDefault() {
     return this.defaultManager;

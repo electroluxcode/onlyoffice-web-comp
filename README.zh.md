@@ -156,7 +156,7 @@ window["__custom_font_registry__"] = {
 - **键**（如 `"1001"`）必须与上一步 `--id` 及 `fonts/` 下的文件名一致
 - **值**为别名数组，需覆盖 Word / Excel / PPT 文档中实际使用的字体名
 
-SDK 加载时会根据 registry **自动同步** 到 `__fonts_files` / `__fonts_infos`，并生成 `__custom_font_catalog_snapshot__` 供 Word / Excel / Slide 三套字体管线使用（见 `AllFonts.js` 末尾运行时补丁）。
+=
 
 ### 3. 内置字体（可选）
 

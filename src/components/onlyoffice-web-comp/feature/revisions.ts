@@ -27,3 +27,35 @@ export function normalizeRevisionItems(raw: unknown): RevisionItem[] {
 
   return raw.map((item, index) => normalizeRevisionItem(item, index));
 }
+
+/** SDK 修订栈为空时，从 asc_GetTrackRevisionsReportByAuthors 拉平为 RevisionItem 列表。 */
+export function flattenRevisionsReportByAuthors(
+  report: unknown,
+): RevisionItem[] {
+  if (!report || typeof report !== "object") {
+    return [];
+  }
+
+  const items: RevisionItem[] = [];
+  let index = 0;
+
+  for (const [author, changes] of Object.entries(
+    report as Record<string, unknown>,
+  )) {
+    if (!Array.isArray(changes)) {
+      continue;
+    }
+
+    for (let changeIndex = 0; changeIndex < changes.length; changeIndex++) {
+      items.push({
+        Id: `rev-${index}`,
+        Index: index,
+        Data: { author, changeIndex },
+        Raw: changes[changeIndex],
+      });
+      index += 1;
+    }
+  }
+
+  return items;
+}
