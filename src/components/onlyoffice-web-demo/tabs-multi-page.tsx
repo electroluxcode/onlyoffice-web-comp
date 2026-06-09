@@ -313,7 +313,7 @@ export function TabsMultiPage() {
       const nextReadOnly = !activeTab.readOnly;
 
       if (manager.isReady()) {
-        manager.setReadOnly(nextReadOnly);
+        await manager.setReadOnly(nextReadOnly);
       } else {
         await onlyOfficeManagerFactory.open(
           {

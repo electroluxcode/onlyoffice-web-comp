@@ -717,7 +717,13 @@ export class EditorManager {
       api.__ONLYOFFICE_SLIDE_BLOCK_PATCHED__ = true;
     };
 
-    patchApi(this.getSdkApi() as OnlyOfficeSdkApi);
+    patchApi(
+      this.getSdkApi() as unknown as {
+        AddSlide?: (...args: unknown[]) => unknown;
+        DublicateSlide?: (...args: unknown[]) => unknown;
+        __ONLYOFFICE_SLIDE_BLOCK_PATCHED__?: boolean;
+      },
+    );
     patchApi(
       (this.getShellMainController() as {
         api?: {
@@ -729,15 +735,47 @@ export class EditorManager {
     );
   }
 
+  /** downloadAs → /downloadas/ → 更新 fsMap 中的 Editor.bin。 */
+  private async captureDocumentSnapshot() {
+    if (!this.editor) {
+      return this.server.getDocumentSnapshot();
+    }
+
+    return await this.server.captureCurrentDocument(() => {
+      this.installIframeProxies();
+      this.editor?.downloadAs("bin");
+    });
+  }
+
+  /**
+   * 只读模式下 downloadAs 可能被 SDK 拦截；导出前临时恢复编辑权再抓取。
+   */
+  private async captureDocumentSnapshotAllowingReadOnly() {
+    if (!this.editor) {
+      return this.server.getDocumentSnapshot();
+    }
+
+    const locked = this.readOnly;
+    if (locked) {
+      this.syncEditingRights(true);
+    }
+
+    try {
+      return await this.captureDocumentSnapshot();
+    } finally {
+      if (locked) {
+        this.syncEditingRights(false);
+        this.syncSlideReadOnlyExtras(true);
+      }
+    }
+  }
+
   private async captureDocumentIfDirty() {
     if (!this.editor || this.readOnly || !this.dirty) {
       return;
     }
 
-    await this.server.captureCurrentDocument(() => {
-      this.installIframeProxies();
-      this.editor?.downloadAs("bin");
-    });
+    await this.captureDocumentSnapshot();
     this.dirty = false;
   }
 
@@ -1023,11 +1061,8 @@ export class EditorManager {
   /** 导出链路：downloadAs("bin") → server.resolvePendingExport → SAVE_DOCUMENT 事件。 */
   async export() {
     let snapshot;
-    if (this.editor && !this.readOnly) {
-      snapshot = await this.server.captureCurrentDocument(() => {
-        this.installIframeProxies();
-        this.editor?.downloadAs("bin");
-      });
+    if (this.editor && (!this.readOnly || this.dirty)) {
+      snapshot = await this.captureDocumentSnapshotAllowingReadOnly();
       this.dirty = false;
     } else {
       snapshot = this.server.getDocumentSnapshot();
@@ -1048,15 +1083,30 @@ export class EditorManager {
     this.editor?.setUsers?.([{ id: user.id, name: user.name }]);
   }
 
-  /** 就地切换只读 */
-  setReadOnly(readOnly: boolean) {
+  /** 就地切换只读；切到只读前先 downloadAs 落盘，避免后续导出仍是打开时的 Editor.bin。 */
+  async setReadOnly(readOnly: boolean) {
     if (this.readOnly === readOnly) {
       return;
     }
 
-    this.readOnly = readOnly;
-    this.installSlideStructureEditBlocker();
-    this.syncEditingRights(!readOnly);
+    onlyofficeEventbus.emit(ONLYOFFICE_EVENT_KEYS.LOADING_CHANGE, {
+      loading: true,
+    });
+
+    try {
+      if (readOnly && this.editor) {
+        await this.captureDocumentSnapshot();
+        this.dirty = false;
+      }
+
+      this.readOnly = readOnly;
+      this.installSlideStructureEditBlocker();
+      this.syncEditingRights(!readOnly);
+    } finally {
+      onlyofficeEventbus.emit(ONLYOFFICE_EVENT_KEYS.LOADING_CHANGE, {
+        loading: false,
+      });
+    }
   }
 
   getReadOnly() {

@@ -189,7 +189,7 @@ export function OfficePreviewPage({
       if (!manager) {
         throw new Error("Editor is not initialized");
       }
-      manager.toggleReadOnly();
+      await manager.toggleReadOnly();
       setReadOnly(manager.getReadOnly());
     }, "切换模式失败");
 

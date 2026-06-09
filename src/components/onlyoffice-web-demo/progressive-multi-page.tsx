@@ -168,7 +168,7 @@ export function ProgressiveMultiPage() {
     try {
       const manager = managers[key];
       if (manager?.isReady()) {
-        manager.setReadOnly(nextReadOnly);
+        await manager.setReadOnly(nextReadOnly);
       } else {
         await openPanel(key, documents[key], nextReadOnly);
       }

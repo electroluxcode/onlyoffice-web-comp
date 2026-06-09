@@ -173,12 +173,12 @@ export class OnlyOfficeManager {
     this.editor.setUser(user);
   }
 
-  setReadOnly(readOnly: boolean) {
+  async setReadOnly(readOnly: boolean) {
+    await this.editor.setReadOnly(readOnly);
     this.readOnly = readOnly;
-    this.editor.setReadOnly(readOnly);
   }
 
-  toggleReadOnly() {
+  async toggleReadOnly() {
     return this.setReadOnly(!this.readOnly);
   }
 
