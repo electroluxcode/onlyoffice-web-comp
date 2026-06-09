@@ -1,5 +1,9 @@
-import { createFetchProxy } from "../internal/editor/fetch";
-import { createXHRProxy } from "../internal/editor/xhr";
+import {
+  installOnlyOfficeProxies,
+  installReporterWindowHook,
+  type OnlyOfficeProxyWindow,
+  type ReporterHookWindow,
+} from "../internal/editor/install-proxies";
 import { EditorServer } from "../internal/editor/server";
 import io, { MockSocket, type MockSocketOptions } from "../internal/editor/socket";
 import {
@@ -197,13 +201,19 @@ export class EditorManager {
       ?.querySelector<HTMLIFrameElement>('iframe[name="frameEditor"]');
   }
 
+  private installProxiesOnWindow(win: OnlyOfficeProxyWindow) {
+    installOnlyOfficeProxies(win, this.server, this.createScopedIo());
+  }
+
   /**
    * 劫持 iframe 内 XHR/fetch/io，将协作与 downloadAs 请求路由到 mock EditorServer。
    * 必须在 downloadAs 前安装，否则 export 无法收到 /downloadas/ 分片。
    */
   private installIframeProxies() {
     const iframe = this.getEditorFrameElement();
-    const win = iframe?.contentWindow as OnlyOfficeWindow | undefined;
+    const win = iframe?.contentWindow as
+      | (OnlyOfficeWindow & ReporterHookWindow)
+      | undefined;
     const iframeDoc = iframe?.contentDocument;
 
     if (!iframeDoc || !win) {
@@ -214,36 +224,10 @@ export class EditorManager {
       return;
     }
 
-    const xhr = createXHRProxy(win.XMLHttpRequest, {
-      baseUrl: win.location.href,
-      shouldBypass: (url) => {
-        const pathname = new URL(url, win.location.href).pathname;
-
-        // 字体二进制由 OnlyOffice 引擎同步读取，必须走原生 XHR。
-        return (
-          pathname.includes("/sdkjs/common/AllFonts.js") ||
-          pathname.includes("/sdkjs/common/libfont/") ||
-          pathname.includes("/fonts/")
-        );
-      },
+    this.installProxiesOnWindow(win);
+    installReporterWindowHook(win, (target) => {
+      this.installProxiesOnWindow(target as OnlyOfficeProxyWindow);
     });
-    // iframe fetch 仅代理 OnlyOffice 文档协作请求；x2t Brotli 资源在 x2t.worker 内解压。
-    const fetchProxy = createFetchProxy(win);
-    const WorkerCtor = win.Worker;
-
-    xhr.use((request: Request) => this.server.handleRequest(request));
-    fetchProxy.use((request: Request) => this.server.handleRequest(request));
-
-    Object.assign(win, {
-      io: this.createScopedIo(),
-      XMLHttpRequest: xhr,
-      fetch: fetchProxy,
-      Worker: function Worker(url: string, options?: WorkerOptions) {
-        const u = new URL(url, location.origin);
-        return new WorkerCtor(u.href.replace(u.origin, location.origin), options);
-      },
-    });
-    win.__ONLYOFFICE_PROXIES_INSTALLED__ = true;
     this.installSaveShortcutBlocker();
   }
 

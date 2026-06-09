@@ -7,6 +7,9 @@ import {
   getFileExt,
   getX2tConvertFormats,
   getX2tCsvConvertOptions,
+  sanitizeCsvBufferForX2t,
+  isMultilineCsv,
+  convertCsvBufferToXlsxBuffer,
 } from "./utils";
 import { allPlugins, featuredPlugins, getPluginsData } from "./plugins";
 
@@ -104,7 +107,11 @@ function getUrl(data: Uint8Array, type?: string) {
 
 export class EditorServer {
   private id = "";
-  private socket: MockSocket | null = null;
+  private sockets = new Set<MockSocket>();
+  private messageHandlers = new WeakMap<
+    MockSocket,
+    (msg: unknown, ...args: unknown[]) => void
+  >();
   private sessionId: string = "session-id";
   private user: User = {
     id: "uid",
@@ -143,7 +150,6 @@ export class EditorServer {
 
   constructor(options: ServerOptions = {}) {
     this.options = options;
-    this.send = this.send.bind(this);
     this.handleConnect = this.handleConnect.bind(this);
     this.handleMessage = this.handleMessage.bind(this);
   }
@@ -155,10 +161,14 @@ export class EditorServer {
       this.pendingExport = null;
     }
 
-    if (this.socket) {
-      this.socket.server.off("message", this.handleMessage);
-      this.socket = null;
+    for (const socket of this.sockets) {
+      const handler = this.messageHandlers.get(socket);
+      if (handler) {
+        socket.server.off("message", handler);
+      }
     }
+    this.sockets.clear();
+    this.messageHandlers = new WeakMap();
 
     if (this.urlsMap.size > 0) {
       this.urlsMap.forEach((url) => URL.revokeObjectURL(url));
@@ -375,18 +385,10 @@ export class EditorServer {
 
     if (fileType == "pdf") {
       output = new Uint8Array(buffer);
+    } else if (fileType === "csv") {
+      ({ output, media } = await this.loadCsvDocument(buffer));
     } else {
-      const { formatFrom, formatTo } = getX2tConvertFormats(fileType);
-      const result = await converter.convert({
-        data: buffer,
-        fileFrom: "doc." + fileType,
-        fileTo: "Editor.bin",
-        formatFrom,
-        formatTo,
-        ...(fileType === "csv" ? getX2tCsvConvertOptions(buffer) : {}),
-      });
-      output = result.output;
-      media = result.media;
+      ({ output, media } = await this.convertBufferToEditorBin(buffer, fileType));
     }
 
     if (!output) {
@@ -400,6 +402,47 @@ export class EditorServer {
     this.urlsMap.set("Editor.bin", getUrl(output));
     for (const name in media) {
       this.addMedia(name, media[name]);
+    }
+  }
+
+  private async convertBufferToEditorBin(buffer: ArrayBuffer, fileType: string) {
+    const { formatFrom, formatTo } = getX2tConvertFormats(fileType);
+    const result = await converter.convert({
+      data: buffer,
+      fileFrom: "doc." + fileType,
+      fileTo: "Editor.bin",
+      formatFrom,
+      formatTo,
+    });
+    return { output: result.output, media: result.media };
+  }
+
+  private async loadCsvDocument(buffer: ArrayBuffer) {
+    if (isMultilineCsv(buffer)) {
+      const xlsxBuffer = await convertCsvBufferToXlsxBuffer(buffer);
+      return this.convertBufferToEditorBin(xlsxBuffer, "xlsx");
+    }
+
+    const convertBuffer = sanitizeCsvBufferForX2t(buffer);
+    const { formatFrom, formatTo } = getX2tConvertFormats("csv");
+
+    try {
+      const result = await converter.convert({
+        data: convertBuffer,
+        fileFrom: "doc.csv",
+        fileTo: "Editor.bin",
+        formatFrom,
+        formatTo,
+        ...getX2tCsvConvertOptions(convertBuffer),
+      });
+      return { output: result.output, media: result.media };
+    } catch (err) {
+      console.warn(
+        "[EditorServer] CSV x2t failed, retry via xlsx:",
+        err,
+      );
+      const xlsxBuffer = await convertCsvBufferToXlsxBuffer(buffer);
+      return this.convertBufferToEditorBin(xlsxBuffer, "xlsx");
     }
   }
 
@@ -446,8 +489,8 @@ export class EditorServer {
   handleConnect({ socket }: { socket: MockSocket }) {
     console.log("connect: ", socket);
 
-    this.socket = socket;
-    const { send, sessionId, client } = this;
+    this.sockets.add(socket);
+    const { sessionId, client } = this;
 
     const readOnly = this.options.getState?.()?.readOnly ?? false;
 
@@ -465,9 +508,13 @@ export class EditorServer {
       },
     ];
 
-    socket.server.on("message", this.handleMessage);
+    const handler = (msg: unknown, ...args: unknown[]) => {
+      void this.handleMessage(socket, msg as Record<string, unknown>, ...args);
+    };
+    this.messageHandlers.set(socket, handler);
+    socket.server.on("message", handler);
 
-    send({
+    this.sendTo(socket, {
       maxPayload: 100000000,
       pingInterval: 25000,
       pingTimeout: 20000,
@@ -475,7 +522,7 @@ export class EditorServer {
       upgrades: [],
     });
 
-    send({
+    this.sendTo(socket, {
       type: "license",
       license: {
         type: 3,
@@ -496,22 +543,35 @@ export class EditorServer {
 
   handleDisconnect({ socket }: { socket: MockSocket }) {
     console.log("disconnect: ", socket);
-    this.socket = null;
-  }
 
-  send(...msg: unknown[]) {
-    if (!this.socket) {
-      console.error("Socket is not connected");
-      return;
+    const handler = this.messageHandlers.get(socket);
+    if (handler) {
+      socket.server.off("message", handler);
+      this.messageHandlers.delete(socket);
     }
-    console.log("[ws] >> ", ...msg);
-    this.socket.server.emit("message", ...msg);
+    this.sockets.delete(socket);
   }
 
-  async handleMessage(msg: Record<string, unknown>, ...args: unknown[]) {
+  private sendTo(socket: MockSocket, ...msg: unknown[]) {
+    console.log("[ws] >> ", ...msg);
+    socket.server.emit("message", ...msg);
+  }
+
+  private broadcast(...msg: unknown[]) {
+    for (const socket of this.sockets) {
+      this.sendTo(socket, ...msg);
+    }
+  }
+
+  async handleMessage(
+    socket: MockSocket,
+    msg: Record<string, unknown>,
+    ...args: unknown[]
+  ) {
     console.log("[ws] << ", msg, args);
 
-    const { send, sessionId, participants, user, client } = this;
+    const send = (...payload: unknown[]) => this.sendTo(socket, ...payload);
+    const { sessionId, participants, user, client } = this;
     const type =
       typeof msg === "object" && msg && "type" in msg ? msg.type : null;
     switch (type) {
@@ -624,7 +684,7 @@ export class EditorServer {
   async handleRequest(req: Request) {
     const u = new URL(req.url);
 
-    const { id: key, send } = this;
+    const { id: key } = this;
     // console.log("[msg] server: ", u, key);
 
     if (u.pathname.endsWith("/downloadas/" + key)) {
@@ -677,7 +737,7 @@ export class EditorServer {
       }
 
       setTimeout(() => {
-        send({
+        this.broadcast({
           type: "documentOpen",
           data: {
             type: "save",
