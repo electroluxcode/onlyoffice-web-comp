@@ -2,7 +2,6 @@ import { parseCsvBuffer } from "./utils";
 
 async function loadExcelJS() {
   const mod = await import(
-    // @ts-expect-error exceljs min bundle has no types
     "exceljs/dist/exceljs.min"
   );
   return mod.default ?? mod;
