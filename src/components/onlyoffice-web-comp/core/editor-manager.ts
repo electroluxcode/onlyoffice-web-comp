@@ -122,6 +122,11 @@ type ShellMainController = {
   mode?: { isEdit?: boolean; canEdit?: boolean };
 };
 
+type WordHeaderView = {
+  btnDocMode?: { setVisible?: (visible: boolean) => void };
+  btnPDFMode?: { setVisible?: (visible: boolean) => void };
+};
+
 type OnlyOfficeParentWindow = Window & {
   __ONLYOFFICE_SCOPED_IO__?: Record<string, ScopedIoFactory>;
 };
@@ -319,6 +324,8 @@ export class EditorManager {
       layout: {
         header: {
           save: false,
+          // Word 头部「编辑 / 审阅 / 查看」切换（PPT/Excel 无此入口）
+          editMode: false,
         },
         toolbar: {
           file: {
@@ -593,6 +600,41 @@ export class EditorManager {
     );
   }
 
+  private getWordHeaderView() {
+    const win = this.getEditorFrameWindow() as OnlyOfficeIframeWindow & {
+      DE?: {
+        getController?: (name: string) => {
+          getView?: (name: string) => WordHeaderView;
+        };
+      };
+    };
+
+    return win?.DE?.getController?.("Viewport")?.getView?.("Common.Views.Header");
+  }
+
+  /** 隐藏 Word 头部「编辑 / 审阅 / 查看」切换（customization + 运行时兜底）。 */
+  private hideWordDocModeSwitcher() {
+    if (getDocumentType(this.fileType) !== DocumentType.Word) {
+      return;
+    }
+
+    const header = this.getWordHeaderView();
+    header?.btnDocMode?.setVisible?.(false);
+    header?.btnPDFMode?.setVisible?.(false);
+
+    const hedset = this.getEditorFrameWindow()?.document?.querySelector(
+      "[data-layout-name=\"header-editMode\"]",
+    );
+    if (hedset instanceof HTMLElement) {
+      hedset.style.display = "none";
+    }
+  }
+
+  private scheduleWordDocModeHide() {
+    this.hideWordDocModeSwitcher();
+    window.setTimeout(() => this.hideWordDocModeSwitcher(), 0);
+  }
+
   /** 同步 web-apps 工具栏/侧栏的 editing:disable（viewMode 与只读一致）。 */
   private syncShellEditingDisable(
     disabled: boolean,
@@ -603,9 +645,7 @@ export class EditorManager {
       return;
     }
 
-    const isSlide = documentType === DocumentType.Slide;
-
-    if (isSlide) {
+    if (documentType === DocumentType.Slide) {
       nc.trigger("editing:disable", disabled, {
         viewMode: disabled,
         allowSignature: !disabled,
@@ -622,6 +662,61 @@ export class EditorManager {
         header: { search: false },
         shortcuts: disabled ? false : undefined,
       });
+      return;
+    }
+
+    if (documentType === DocumentType.Word) {
+      if (disabled) {
+        nc.trigger("editing:disable", true, {
+          viewMode: true,
+          reviewMode: false,
+          fillFormMode: false,
+          viewDocMode: false,
+          allowMerge: false,
+          allowSignature: false,
+          allowProtect: false,
+          rightMenu: { clear: true, disable: true },
+          statusBar: true,
+          leftMenu: { disable: true, previewMode: true },
+          fileMenu: { protect: true, history: false },
+          navigation: { disable: false, previewMode: true },
+          comments: { disable: false, previewMode: true },
+          chat: false,
+          review: true,
+          viewport: true,
+          documentHolder: { clear: true, disable: true },
+          toolbar: true,
+          plugins: true,
+          protect: true,
+          header: { search: false, startfill: false },
+          shortcuts: false,
+        });
+      } else {
+        nc.trigger("editing:disable", false, {
+          viewMode: false,
+          reviewMode: false,
+          fillFormMode: false,
+          viewDocMode: false,
+          allowMerge: true,
+          allowSignature: false,
+          allowProtect: false,
+          rightMenu: { clear: false, disable: true },
+          statusBar: true,
+          leftMenu: { disable: false, previewMode: false },
+          fileMenu: false,
+          navigation: { disable: false, previewMode: false },
+          comments: { disable: false, previewMode: false },
+          chat: false,
+          review: true,
+          viewport: false,
+          documentHolder: { clear: false, disable: true },
+          toolbar: true,
+          plugins: true,
+          protect: true,
+        });
+      }
+
+      this.scheduleWordDocModeHide();
       return;
     }
 
@@ -859,6 +954,8 @@ export class EditorManager {
 
           if (this.readOnly) {
             this.applyInitialReadOnlyState(documentType);
+          } else if (documentType === DocumentType.Word) {
+            this.scheduleWordDocModeHide();
           }
         },
         onDocumentStateChange: (event: { data: boolean }) => {
