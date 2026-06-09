@@ -499,20 +499,35 @@ function writeInputs({
   formatTo,
   data,
   media,
+  csvEncoding,
+  csvDelimiter,
+  csvDelimiterChar,
 }: X2tConvertParams) {
-  const params = {
+  const isCsvSource =
+    formatFrom === AvsFileType.AVS_FILE_SPREADSHEET_CSV ||
+    fileFrom.toLowerCase().endsWith(".csv");
+
+  const params: Record<string, string | number | boolean> = {
     m_sFileFrom: fileFrom,
     m_sThemeDir: "/working/themes",
     m_sFileTo: fileTo,
-    m_nFormatFrom: formatFrom,
-    m_nFormatTo: formatTo,
+    m_nFormatFrom: formatFrom ?? 0,
+    m_nFormatTo: formatTo ?? 0,
     m_bIsPDFA: formatTo === AvsFileType.AVS_FILE_CROSSPLATFORM_PDFA,
-    m_bIsNoBase64: false,
+    m_bIsNoBase64: true,
     m_sFontDir: "/working/fonts/",
   };
 
+  if (isCsvSource) {
+    params.m_nCsvTxtEncoding = csvEncoding ?? 46;
+    params.m_nCsvDelimiter = csvDelimiter ?? 4;
+    if (csvDelimiterChar) {
+      params.m_nCsvDelimiterChar = csvDelimiterChar;
+    }
+  }
+
   const content = Object.entries(params)
-    .filter(([k, v]) => v)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
     .reduce((a, [k, v]) => a + `<${k}>${v}</${k}>\n`, "");
 
   const xml = `<?xml version="1.0" encoding="utf-8"?>
@@ -554,6 +569,9 @@ async function convert({
   fontAliases,
   fontExportAliases,
   themes,
+  csvEncoding,
+  csvDelimiter,
+  csvDelimiterChar,
 }: X2tConvertParams): Promise<X2tConvertResult> {
   const preparedData = data
     ? await rewriteZipFontNames(data, fileFrom, fontAliases)
@@ -571,6 +589,9 @@ async function convert({
     formatTo,
     data: preparedData,
     media,
+    csvEncoding,
+    csvDelimiter,
+    csvDelimiterChar,
   });
 
   if (
@@ -621,7 +642,11 @@ async function convert({
       output = new Uint8Array(restored);
     }
   } catch (e) {
-    console.error(e);
+    console.error("[x2t.worker] read output failed:", e);
+  }
+
+  if (!output) {
+    throw new Error(`x2t conversion produced no output (${fileFrom} -> ${fileTo})`);
   }
 
   // Read media files

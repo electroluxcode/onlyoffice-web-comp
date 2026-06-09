@@ -2,7 +2,12 @@ import { converter } from "./x2t";
 import { MockSocket } from "./socket";
 import { User, Participant, AscSaveTypes, ServerOptions } from "./types";
 import { emptyDocx, emptyPdf, emptyPptx, emptyXlsx } from "./empty";
-import { getDocumentType, getFileExt, getX2tConvertFormats } from "./utils";
+import {
+  getDocumentType,
+  getFileExt,
+  getX2tConvertFormats,
+  getX2tCsvConvertOptions,
+} from "./utils";
 import { allPlugins, featuredPlugins, getPluginsData } from "./plugins";
 
 function mergeBuffers(buffers: Uint8Array[]) {
@@ -267,13 +272,14 @@ export class EditorServer {
         fileTo: "Editor.bin",
         formatFrom,
         formatTo,
+        ...(fileType === "csv" ? getX2tCsvConvertOptions(buffer) : {}),
       });
       output = result.output;
       media = result.media;
     }
 
     if (!output) {
-      throw new Error("Failed to convert file");
+      throw new Error(`Failed to convert ${fileType} file`);
     }
 
     if (this.urlsMap.size > 0) {
@@ -323,6 +329,8 @@ export class EditorServer {
     this.socket = socket;
     const { send, sessionId, client } = this;
 
+    const readOnly = this.options.getState?.()?.readOnly ?? false;
+
     this.participants = [
       {
         connectionId: this.sessionId,
@@ -331,9 +339,9 @@ export class EditorServer {
         idOriginal: this.user.id,
         indexUser: 1,
         isCloseCoAuthoring: false,
-        isLiveViewer: false,
+        isLiveViewer: readOnly,
         username: this.user.name,
-        view: false,
+        view: readOnly,
       },
     ];
 
@@ -387,8 +395,9 @@ export class EditorServer {
     const type =
       typeof msg === "object" && msg && "type" in msg ? msg.type : null;
     switch (type) {
-      case "auth":
+      case "auth": {
         const changes: unknown[] = [];
+        const readOnly = this.options.getState?.()?.readOnly ?? false;
         send({
           type: "authChanges",
           changes: changes,
@@ -406,15 +415,15 @@ export class EditorServer {
           buildNumber: client.buildNumber || 9,
           licenseType: 3,
           editorType: 2,
-          mode: "edit",
+          mode: readOnly ? "view" : "edit",
           permissions: {
             comment: true,
             chat: true,
             download: true,
-            edit: true,
+            edit: !readOnly,
             fillForms: false,
-            modifyFilter: true,
-            protect: true,
+            modifyFilter: !readOnly,
+            protect: !readOnly,
             print: true,
             review: true,
             copy: true,
@@ -447,6 +456,7 @@ export class EditorServer {
           });
         }
         break;
+      }
       case "isSaveLock":
         send({
           type: "saveLock",

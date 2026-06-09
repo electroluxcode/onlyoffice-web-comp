@@ -187,12 +187,26 @@ export const enum AvsFileType {
   AVS_FILE_DRAW_VSTM = AVS_FILE_DRAW + 0x0006,
 }
 
+/** OnlyOffice x2t CSV encoding index (46 = UTF-8 / codepage 65001). */
+export const X2T_CSV_ENCODING_UTF8 = 46;
+
+/** OnlyOffice x2t CSV encoding index (18 = GB2312 / codepage 936). */
+export const X2T_CSV_ENCODING_GBK = 18;
+
+/** OnlyOffice x2t CSV delimiter enum values. */
+export const X2T_CSV_DELIMITER_TAB = 1;
+export const X2T_CSV_DELIMITER_SEMICOLON = 2;
+export const X2T_CSV_DELIMITER_COMMA = 4;
+
 export interface X2tConvertParams {
   data: ArrayBuffer | never;
   fileFrom: string;
   fileTo: string;
   formatFrom?: number;
   formatTo?: number;
+  csvEncoding?: number;
+  csvDelimiter?: number;
+  csvDelimiterChar?: string;
   media?: { [key: string]: Uint8Array };
   fonts?: { [key: string]: Uint8Array };
   fontAliases?: { [key: string]: string };

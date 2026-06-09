@@ -143,6 +143,9 @@ export class X2tConverter {
     fontAliases,
     fontExportAliases,
     themes,
+    csvEncoding,
+    csvDelimiter,
+    csvDelimiterChar,
   }: X2tConvertParams): Promise<X2tConvertResult> {
     await this.init();
 
@@ -167,6 +170,9 @@ export class X2tConverter {
       fontAliases,
       fontExportAliases,
       themes: cloneMap(themes),
+      csvEncoding,
+      csvDelimiter,
+      csvDelimiterChar,
     };
     return this.sendMessage<X2tConvertResult>("convert", payload);
   }

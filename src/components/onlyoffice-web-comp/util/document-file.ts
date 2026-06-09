@@ -115,7 +115,8 @@ export async function exportEditorDocumentAsFile(
     exported.media,
   );
   const mimeType = getOnlyOfficeMimeType(fileExtension);
-  return new File([result.data], fileName || result.fileName, { type: mimeType });
+  const bytes = new Uint8Array(result.data);
+  return new File([bytes], fileName || result.fileName, { type: mimeType });
 }
 
 /** 导出编辑器文档并转为 base64 字符串 */

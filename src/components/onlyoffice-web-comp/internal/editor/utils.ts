@@ -1,5 +1,13 @@
 import { getDocumentType, getNewUrl } from "../../const";
-import { AvsFileType, DocumentType } from "./types";
+import {
+  AvsFileType,
+  DocumentType,
+  X2T_CSV_DELIMITER_COMMA,
+  X2T_CSV_DELIMITER_SEMICOLON,
+  X2T_CSV_DELIMITER_TAB,
+  X2T_CSV_ENCODING_GBK,
+  X2T_CSV_ENCODING_UTF8,
+} from "./types";
 
 export { getDocumentType, getNewUrl };
 
@@ -49,6 +57,96 @@ export function getX2tConvertFormats(fileType: string) {
   return {
     formatFrom,
     formatTo: getX2tBinFormat(fileType),
+  };
+}
+
+function isValidUtf8(bytes: Uint8Array) {
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function decodeCsvSample(buffer: ArrayBuffer, encoding: number) {
+  const bytes = new Uint8Array(buffer);
+  const sample = bytes.subarray(0, Math.min(bytes.length, 8192));
+  const withoutBom =
+    encoding === X2T_CSV_ENCODING_UTF8 &&
+    sample.length >= 3 &&
+    sample[0] === 0xef &&
+    sample[1] === 0xbb &&
+    sample[2] === 0xbf
+      ? sample.subarray(3)
+      : sample;
+
+  if (encoding === X2T_CSV_ENCODING_UTF8) {
+    return new TextDecoder("utf-8").decode(withoutBom);
+  }
+
+  try {
+    return new TextDecoder("gbk").decode(withoutBom);
+  } catch {
+    return new TextDecoder("latin1").decode(withoutBom);
+  }
+}
+
+function getFirstCsvLine(text: string) {
+  const newline = text.search(/\r?\n/);
+  return newline === -1 ? text : text.slice(0, newline);
+}
+
+/** Detect delimiter from the first CSV row. */
+export function detectX2tCsvDelimiter(buffer: ArrayBuffer, encoding: number) {
+  const line = getFirstCsvLine(decodeCsvSample(buffer, encoding));
+  const counts = { comma: 0, semicolon: 0, tab: 0 };
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        i++;
+        continue;
+      }
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (inQuotes) continue;
+    if (ch === ",") counts.comma++;
+    else if (ch === ";") counts.semicolon++;
+    else if (ch === "\t") counts.tab++;
+  }
+
+  if (counts.tab > counts.comma && counts.tab > counts.semicolon) {
+    return X2T_CSV_DELIMITER_TAB;
+  }
+  if (counts.semicolon > counts.comma) {
+    return X2T_CSV_DELIMITER_SEMICOLON;
+  }
+  return X2T_CSV_DELIMITER_COMMA;
+}
+
+/** Detect OnlyOffice x2t CSV encoding index from BOM / byte patterns. */
+export function detectX2tCsvEncoding(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xef &&
+    bytes[1] === 0xbb &&
+    bytes[2] === 0xbf
+  ) {
+    return X2T_CSV_ENCODING_UTF8;
+  }
+  return isValidUtf8(bytes) ? X2T_CSV_ENCODING_UTF8 : X2T_CSV_ENCODING_GBK;
+}
+
+export function getX2tCsvConvertOptions(buffer: ArrayBuffer) {
+  const csvEncoding = detectX2tCsvEncoding(buffer);
+  return {
+    csvEncoding,
+    csvDelimiter: detectX2tCsvDelimiter(buffer, csvEncoding),
   };
 }
 
