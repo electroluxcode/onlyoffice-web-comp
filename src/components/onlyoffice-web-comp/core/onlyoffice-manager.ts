@@ -195,6 +195,7 @@ export class OnlyOfficeManager {
     return this.editor.export();
   }
 
+  /** 导出为 Office 文件 Blob：Editor.bin → x2t → doc.{fileType}。 */
   async exportAsBlob() {
     const binData = await this.editor.export();
     const result = await convertBinToDocument(
@@ -212,6 +213,7 @@ export class OnlyOfficeManager {
     };
   }
 
+  /** 触发浏览器下载；内部先走 exportAsBlob 完整链路。 */
   async downloadExport() {
     const { blob, fileName } = await this.exportAsBlob();
     downloadBlob(blob, fileName);

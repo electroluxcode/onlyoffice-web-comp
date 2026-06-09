@@ -22,4 +22,5 @@ export type OnlyOfficeIframeWindow = typeof window & {
   Asc?: {
   };
   __ONLYOFFICE_PROXIES_INSTALLED__?: boolean;
+  __ONLYOFFICE_SAVE_BLOCKED__?: boolean;
 };

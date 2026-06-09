@@ -10,6 +10,15 @@ import {
 } from "./utils";
 import { allPlugins, featuredPlugins, getPluginsData } from "./plugins";
 
+/**
+ * Mock OnlyOffice 协作服务：维护 fsMap（Editor.bin + media），处理 WebSocket 与 /downloadas/ HTTP。
+ *
+ * 关键链路：
+ * 打开 — loadDocument：x2t doc.* → Editor.bin
+ * 导出 — captureCurrentDocument + downloadAs → /downloadas/ → resolvePendingExport
+ * 保存 — 同 URL 无 pendingExport 时 commitUserSave（UI 已禁用，兜底保留）
+ */
+
 function mergeBuffers(buffers: Uint8Array[]) {
   const totalLength = buffers.reduce((acc, buffer) => acc + buffer.length, 0);
   const mergedBuffer = new Uint8Array(totalLength);
@@ -19,6 +28,16 @@ function mergeBuffers(buffers: Uint8Array[]) {
     offset += buffer.length;
   }
   return mergedBuffer;
+}
+
+/** OnlyOffice 画布 bin 魔数；x2t 只接受 XLSY/DOCY/PPTY，非法数据会导致导出失败。 */
+function isValidEditorBin(data: Uint8Array) {
+  if (data.length < 4) {
+    return false;
+  }
+
+  const magic = String.fromCharCode(data[0], data[1], data[2], data[3]);
+  return magic === "XLSY" || magic === "DOCY" || magic === "PPTY";
 }
 
 function randomId() {
@@ -106,7 +125,12 @@ export class EditorServer {
   private urlsMap: Map<string, string> = new Map();
 
   private downloadId: string = "";
+  /** downloadAs multipart 分片缓冲；保存与导出共用 HTTP 管道，需与 pendingExport 配合区分意图。 */
   private downloadParts: Uint8Array[] = [];
+  /** 用户保存 downloadAs 进行中时阻塞 export，避免分片交错污染 Editor.bin。 */
+  private savingDone: Promise<void> = Promise.resolve();
+  private finishSaving: (() => void) | null = null;
+  /** export() 调用 downloadAs("bin") 后等待 resolvePendingExport 完成。 */
   private pendingExport:
     | {
         resolve: (snapshot: ReturnType<EditorServer["getDocumentSnapshot"]>) => void;
@@ -149,6 +173,7 @@ export class EditorServer {
     this.loadPromise = null;
     this.downloadId = "";
     this.downloadParts = [];
+    this.endSaving();
     this.syncChangesIndex = 0;
     this.participants = [];
   }
@@ -270,17 +295,51 @@ export class EditorServer {
 
   /** 用户保存：更新 Editor.bin 并通知接入层，不触发浏览器下载。 */
   commitUserSave(data: Uint8Array) {
+    if (!isValidEditorBin(data)) {
+      console.warn(
+        "[EditorServer] Ignoring invalid Editor.bin from save, length:",
+        data.length,
+      );
+      return;
+    }
+
+    this.downloadParts = [];
+    this.downloadId = "";
     this.updateEditorBin(data);
     this.options.onUserSave?.(this.getDocumentSnapshot());
   }
 
+  private beginSaving() {
+    this.savingDone = new Promise<void>((resolve) => {
+      this.finishSaving = resolve;
+    });
+  }
+
+  private endSaving() {
+    this.finishSaving?.();
+    this.finishSaving = null;
+    this.savingDone = Promise.resolve();
+  }
+
+  /**
+   * 导出链路：register pendingExport → trigger downloadAs("bin")
+   * → iframe XHR/fetch 命中 /downloadas/ → resolvePendingExport 写入 Editor.bin。
+   * 开始前 await savingDone 并清空 downloadParts，避免与保存分片冲突。
+   */
   async captureCurrentDocument(
     trigger: () => void,
     timeout = 30000,
   ): Promise<ReturnType<EditorServer["getDocumentSnapshot"]>> {
+    await this.savingDone;
+
+    this.downloadParts = [];
+    this.downloadId = "";
+
     if (this.pendingExport) {
-      this.pendingExport.reject(new Error("OnlyOffice export was interrupted"));
       window.clearTimeout(this.pendingExport.timer);
+      this.pendingExport.reject(
+        new DOMException("OnlyOffice export was superseded", "AbortError"),
+      );
       this.pendingExport = null;
     }
 
@@ -302,6 +361,7 @@ export class EditorServer {
     });
   }
 
+  /** 打开文档：x2t 将 doc.{fileType} 转为 Editor.bin 写入 fsMap，供 iframe 加载。 */
   private async loadDocument(
     buffer: ArrayBuffer | (() => Promise<ArrayBuffer>),
     fileType: string,
@@ -362,6 +422,15 @@ export class EditorServer {
 
     window.clearTimeout(pendingExport.timer);
     this.pendingExport = null;
+
+    // 校验魔数后再写入 fsMap，避免脏分片进入 x2t 导出链路。
+    if (!isValidEditorBin(data)) {
+      pendingExport.reject(
+        new Error("OnlyOffice export returned invalid document data"),
+      );
+      return true;
+    }
+
     this.updateEditorBin(data);
     pendingExport.resolve(this.getDocumentSnapshot());
     return true;
@@ -545,6 +614,13 @@ export class EditorServer {
     }
   }
 
+  /**
+   * Mock 协作 HTTP 入口。OnlyOffice iframe 内 XHR/fetch 被代理到此。
+   *
+   * downloadAs 双路径（同一 URL，靠 pendingExport 区分）：
+   * - 有 pendingExport → 导出：resolvePendingExport，写入 Editor.bin 供 x2t
+   * - 无 pendingExport → 保存：commitUserSave（UI 保存已禁用，保留兜底）
+   */
   async handleRequest(req: Request) {
     const u = new URL(req.url);
 
@@ -559,12 +635,12 @@ export class EditorServer {
 
       const download = async () => {
         const input = mergeBuffers(this.downloadParts);
-        if (this.resolvePendingExport(input)) {
-          return { status: "ok" };
+        const resolvedExport = this.resolvePendingExport(input);
+        if (!resolvedExport) {
+          // 用户保存（Ctrl+S / 工具栏保存）：保留 bin，走 EventBus，不触发浏览器下载。
+          this.commitUserSave(input);
         }
-
-        // 用户保存（Ctrl+S / 工具栏保存）：保留 bin，走 EventBus，不触发浏览器下载。
-        this.commitUserSave(input);
+        this.endSaving();
         return { status: "ok" };
       };
 
@@ -572,8 +648,12 @@ export class EditorServer {
         status: "ok",
       };
 
+      // OnlyOffice downloadAs 按 PartStart → Part* → Complete(All) 分片 POST。
       switch (cmd.savetype) {
         case AscSaveTypes.PartStart:
+          if (!this.pendingExport) {
+            this.beginSaving();
+          }
           this.downloadId = "_" + Math.round(Math.random() * 1000);
           this.downloadParts = [new Uint8Array(buffer)];
           break;
@@ -586,6 +666,9 @@ export class EditorServer {
           this.downloadParts = [];
           break;
         case AscSaveTypes.CompleteAll:
+          if (!this.pendingExport) {
+            this.beginSaving();
+          }
           this.downloadId = "_" + Math.round(Math.random() * 1000);
           this.downloadParts = [new Uint8Array(buffer)];
           result = await download();

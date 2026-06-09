@@ -16,6 +16,7 @@ export async function createEditorView(options: CreateEditorViewOptions) {
   return manager.create(options);
 }
 
+/** x2t 反向转换：Editor.bin → doc.{fileType}，供 exportAsBlob / 下载使用。 */
 export async function convertBinToDocument(
   binData: Uint8Array,
   fileName: string,

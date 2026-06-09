@@ -138,7 +138,10 @@ export class EditorManager {
     this.containerId = containerId;
     this.server = new EditorServer({
       getState: () => ({ plugins: "none", readOnly: this.readOnly }),
-      onUserSave: (snapshot) => this.notifyUserSave(snapshot),
+      onUserSave: (snapshot) => {
+        this.dirty = false;
+        this.notifyUserSave(snapshot);
+      },
     });
   }
 
@@ -194,6 +197,10 @@ export class EditorManager {
       ?.querySelector<HTMLIFrameElement>('iframe[name="frameEditor"]');
   }
 
+  /**
+   * 劫持 iframe 内 XHR/fetch/io，将协作与 downloadAs 请求路由到 mock EditorServer。
+   * 必须在 downloadAs 前安装，否则 export 无法收到 /downloadas/ 分片。
+   */
   private installIframeProxies() {
     const iframe = this.getEditorFrameElement();
     const win = iframe?.contentWindow as OnlyOfficeWindow | undefined;
@@ -237,6 +244,7 @@ export class EditorManager {
       },
     });
     win.__ONLYOFFICE_PROXIES_INSTALLED__ = true;
+    this.installSaveShortcutBlocker();
   }
 
   private getEditorFrameWindow() {
@@ -313,9 +321,22 @@ export class EditorManager {
     };
   }
 
+  /** 关闭 autosave 与保存按钮；保存快捷键由 installSaveShortcutBlocker 拦截。 */
   private buildEditorCustomization() {
     return {
       uiTheme: this.uiTheme,
+      autosave: false,
+      layout: {
+        header: {
+          save: false,
+        },
+        toolbar: {
+          file: {
+            save: false,
+          },
+          save: false,
+        },
+      },
       review: {
         trackChanges: false,
         showReviewChanges: false,
@@ -330,6 +351,28 @@ export class EditorManager {
         imageDark: OFFICE_EDITOR_LOGO.imageDark,
       },
     };
+  }
+
+  /** 禁用 Ctrl/Cmd+S 与工具栏保存，避免与 export/downloadAs 共用管道冲突。 */
+  private installSaveShortcutBlocker() {
+    const win = this.getEditorFrameWindow();
+    const doc = win?.document;
+
+    if (!doc || win?.__ONLYOFFICE_SAVE_BLOCKED__) {
+      return;
+    }
+
+    const blockSaveShortcut = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === "s") {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      }
+    };
+
+    doc.addEventListener("keydown", blockSaveShortcut, true);
+    win.__ONLYOFFICE_SAVE_BLOCKED__ = true;
   }
 
   /** 文档若自带 w:trackRevisions，OnlyOffice 默认会跟进入修订模式；接入层强制关闭录制。 */
@@ -660,9 +703,11 @@ export class EditorManager {
       },
       events: {
         onAppReady: () => {
+          // 尽早安装代理，供 WebSocket auth 与后续 downloadAs 使用。
           this.installIframeProxies();
         },
         onDocumentReady: () => {
+          this.installSaveShortcutBlocker();
           this.installCommentResolveCleanup();
           this.applyDefaultReviewSettings();
           void this.ensureWordContentSync();
@@ -681,17 +726,9 @@ export class EditorManager {
             this.dirty = true;
           }
         },
-        onSaveDocument: (event: { data?: unknown }) => {
-          this.handleSaveDocumentEvent(event);
-        },
+        // 不注册 onSave/onSaveDocument：内部保存已禁用，导出统一走 export() → downloadAs。
         onDownloadAs: () => {
           // Required so DocsAPI.downloadAs can request the current editor binary.
-        },
-        onSave: () => {
-          this.notifyUserSave();
-        },
-        writeFile: async () => {
-          this.notifyUserSave();
         },
       },
       type: "desktop",
@@ -803,26 +840,6 @@ export class EditorManager {
     }, 0);
   }
 
-  private handleSaveDocumentEvent(event: { data?: unknown }) {
-    const payload = event?.data;
-    const buffer =
-      payload instanceof ArrayBuffer
-        ? payload
-        : payload instanceof Uint8Array
-          ? payload.buffer.slice(
-              payload.byteOffset,
-              payload.byteOffset + payload.byteLength,
-            )
-          : undefined;
-
-    if (buffer) {
-      this.server.commitUserSave(new Uint8Array(buffer));
-      return;
-    }
-
-    this.notifyUserSave();
-  }
-
   private isLoadSessionActive(
     containerId: string,
     loadSession?: number,
@@ -892,15 +909,18 @@ export class EditorManager {
     return !!this.editor;
   }
 
-  /** 通过 downloadAs 取当前 bin，不销毁 iframe；只读时直接用已缓存快照。 */
+  /** 导出链路：downloadAs("bin") → server.resolvePendingExport → SAVE_DOCUMENT 事件。 */
   async export() {
-    const snapshot =
-      this.editor && !this.readOnly
-        ? await this.server.captureCurrentDocument(() => {
-            this.installIframeProxies();
-            this.editor?.downloadAs("bin");
-          })
-        : this.server.getDocumentSnapshot();
+    let snapshot;
+    if (this.editor && !this.readOnly) {
+      snapshot = await this.server.captureCurrentDocument(() => {
+        this.installIframeProxies();
+        this.editor?.downloadAs("bin");
+      });
+      this.dirty = false;
+    } else {
+      snapshot = this.server.getDocumentSnapshot();
+    }
     const data = this.createExportData(snapshot);
 
     onlyofficeEventbus.emit(ONLYOFFICE_EVENT_KEYS.SAVE_DOCUMENT, data);
