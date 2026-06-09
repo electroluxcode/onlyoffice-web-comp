@@ -104,6 +104,10 @@ export function OfficePreviewPage({
           defaultFileName,
           readOnly,
           loadSession,
+          user: {
+            id: "uid",
+            name: "demo-user",
+          },
         });
       }
 

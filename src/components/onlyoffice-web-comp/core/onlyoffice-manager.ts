@@ -19,6 +19,7 @@ import {
 import { downloadBlob, getOfficeMimeType } from "../util/download";
 import { initializeOnlyOffice } from "../util/initialize";
 import { convertBinToDocument } from "../util/x2t";
+import type { User } from "../internal/editor/types";
 import {
   EditorManager,
   editorManagerFactory,
@@ -33,6 +34,7 @@ export type OnlyOfficeManagerOptions = {
   /** 首次 bootstrap 打开的默认文件名 */
   defaultFileName: string;
   readOnly?: boolean;
+  user?: User;
   lang?: OnlyOfficeLang;
   /** 页面初始化会话，用于忽略路由切换后过期的 openDocument */
   loadSession?: number;
@@ -62,6 +64,9 @@ export class OnlyOfficeManager {
     this.fileType = options.fileType;
     this.editor = editor;
     this.readOnly = options.readOnly ?? false;
+    if (options.user) {
+      editor.setUser(options.user);
+    }
     if (options.lang) {
       setCurrentLang(options.lang);
     }
@@ -133,6 +138,7 @@ export class OnlyOfficeManager {
       fileName,
       isNew: !file,
       readOnly,
+      user: this.editor.getUser(),
       lang: getOnlyOfficeLang(),
       containerId: this.containerId,
       editorManager: this.editor,
@@ -157,6 +163,14 @@ export class OnlyOfficeManager {
 
   getReadOnly() {
     return this.readOnly;
+  }
+
+  getUser() {
+    return this.editor.getUser();
+  }
+
+  setUser(user: User) {
+    this.editor.setUser(user);
   }
 
   setReadOnly(readOnly: boolean) {

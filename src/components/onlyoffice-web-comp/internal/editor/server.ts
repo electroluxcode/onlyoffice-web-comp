@@ -284,7 +284,14 @@ export class EditorServer {
   }
 
   getUser() {
-    return this.user;
+    return { ...this.user };
+  }
+
+  setUser(user: Partial<User>) {
+    this.user = {
+      ...this.user,
+      ...user,
+    };
   }
 
   getDocumentSnapshot() {
