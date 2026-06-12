@@ -711,12 +711,14 @@ export class EditorServer {
           this.commitUserSave(input);
         }
         this.endSaving();
-        return { status: "ok" };
+        return { status: "ok" as const, isExport: resolvedExport };
       };
 
-      let result = {
+      let result: { status: "ok"; isExport: boolean } = {
         status: "ok",
+        isExport: false,
       };
+      let isFinalChunk = false;
 
       // OnlyOffice downloadAs 按 PartStart → Part* → Complete(All) 分片 POST。
       switch (cmd.savetype) {
@@ -734,6 +736,7 @@ export class EditorServer {
           this.downloadParts.push(new Uint8Array(buffer));
           result = await download();
           this.downloadParts = [];
+          isFinalChunk = true;
           break;
         case AscSaveTypes.CompleteAll:
           if (!this.pendingExport) {
@@ -743,21 +746,27 @@ export class EditorServer {
           this.downloadParts = [new Uint8Array(buffer)];
           result = await download();
           this.downloadParts = [];
+          isFinalChunk = true;
           break;
       }
 
-      setTimeout(() => {
-        this.broadcast({
-          type: "documentOpen",
-          data: {
-            type: "save",
-            // status: "ok",
-            status: result.status,
-            data: "data:,",
-            filetype: "pptx",
-          },
-        });
-      }, 100);
+      // 仅在最终分片通知 SDK，结束 downloadAs 的「正在下载中」状态。
+      // 中间分片若广播 save 会提前消费回调并误报「未知错误」。
+      if (isFinalChunk) {
+        const downloadUrl = this.urlsMap.get("Editor.bin") || "";
+        setTimeout(() => {
+          this.broadcast({
+            type: "documentOpen",
+            data: {
+              type: "save",
+              status: result.status,
+              data: downloadUrl,
+              // export 走 downloadAs("bin")，filetype 须为 bin；空 URL 会触发未知错误。
+              filetype: result.isExport ? "bin" : this.fileType,
+            },
+          });
+        }, 100);
+      }
 
       return Response.json({
         status: result.status,
